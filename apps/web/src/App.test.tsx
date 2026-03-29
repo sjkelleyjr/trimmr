@@ -20,7 +20,7 @@ const renderMocks = vi.hoisted(() => ({
   projectReadableDuration: vi.fn(() => 1000),
 }))
 
-vi.mock('@looplab/media-engine', () => mediaEngineMocks)
+vi.mock('@trimmr/media-engine', () => mediaEngineMocks)
 vi.mock('./lib/renderProjectFrame', () => renderMocks)
 
 import App from './App'

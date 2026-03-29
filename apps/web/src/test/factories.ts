@@ -1,5 +1,5 @@
-import { createProjectFromSource } from '@looplab/editor-core'
-import type { EditorProject, SourceMedia } from '@looplab/shared'
+import { createProjectFromSource } from '@trimmr/editor-core'
+import type { EditorProject, SourceMedia } from '@trimmr/shared'
 
 export function createSourceMedia(overrides: Partial<SourceMedia> = {}): SourceMedia {
   return {

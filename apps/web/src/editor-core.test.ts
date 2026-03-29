@@ -7,7 +7,7 @@ import {
   createProjectFromSource,
   redo,
   undo,
-} from '@looplab/editor-core'
+} from '@trimmr/editor-core'
 import { createProject, createSourceMedia } from './test/factories'
 
 describe('editor timeline model', () => {

@@ -14,10 +14,10 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@looplab/editor-core": "*",
-    "@looplab/media-engine": "*",
-    "@looplab/shared": "*",
-    "@looplab/ui": "*",
+    "@trimmr/editor-core": "*",
+    "@trimmr/media-engine": "*",
+    "@trimmr/shared": "*",
+    "@trimmr/ui": "*",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -10,7 +10,7 @@ import {
   projectDurationMs,
   sourceTimeToOutputTimeMs,
   timelineSnapshot,
-} from '@looplab/shared'
+} from '@trimmr/shared'
 import { createProject } from './test/factories'
 
 describe('shared timeline helpers', () => {

@@ -8,12 +8,12 @@ const root = path.resolve(__dirname, '..')
 const webPublic = path.join(root, 'apps/web/public')
 
 const pages = [
-  { file: 'workflows/index.html', url: 'https://looplab.ai/workflows/index.html' },
-  { file: 'workflows/trim-gif.html', url: 'https://looplab.ai/workflows/trim-gif.html' },
-  { file: 'workflows/resize-gif.html', url: 'https://looplab.ai/workflows/resize-gif.html' },
-  { file: 'workflows/add-text-to-gif.html', url: 'https://looplab.ai/workflows/add-text-to-gif.html' },
-  { file: 'workflows/video-to-gif.html', url: 'https://looplab.ai/workflows/video-to-gif.html' },
-  { file: 'workflows/gif-speed-changer.html', url: 'https://looplab.ai/workflows/gif-speed-changer.html' },
+  { file: 'workflows/index.html', url: 'https://trimmr.xyz/workflows/index.html' },
+  { file: 'workflows/trim-gif.html', url: 'https://trimmr.xyz/workflows/trim-gif.html' },
+  { file: 'workflows/resize-gif.html', url: 'https://trimmr.xyz/workflows/resize-gif.html' },
+  { file: 'workflows/add-text-to-gif.html', url: 'https://trimmr.xyz/workflows/add-text-to-gif.html' },
+  { file: 'workflows/video-to-gif.html', url: 'https://trimmr.xyz/workflows/video-to-gif.html' },
+  { file: 'workflows/gif-speed-changer.html', url: 'https://trimmr.xyz/workflows/gif-speed-changer.html' },
 ]
 
 const sitemapPath = path.join(webPublic, 'sitemap.xml')
@@ -56,7 +56,7 @@ for (const page of pages) {
   }
 }
 
-if (!/Sitemap:\s*https:\/\/looplab\.ai\/sitemap\.xml/i.test(robots)) {
+if (!/Sitemap:\s*https:\/\/trimmr\.xyz\/sitemap\.xml/i.test(robots)) {
   failures.push('robots.txt: missing sitemap pointer')
 }
 

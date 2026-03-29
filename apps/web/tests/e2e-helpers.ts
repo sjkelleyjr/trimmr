@@ -70,7 +70,7 @@ export async function selectExportFormat(page: Page, format: E2eExportFormat) {
 
 export async function readDownloadBuffer(download: Download): Promise<Buffer> {
   const safeName = download.suggestedFilename().replace(/[/\\]/g, '_')
-  const target = path.join(tmpdir(), `looplab-e2e-${Date.now()}-${safeName}`)
+  const target = path.join(tmpdir(), `trimmr-e2e-${Date.now()}-${safeName}`)
   await download.saveAs(target)
   try {
     return readFileSync(target)

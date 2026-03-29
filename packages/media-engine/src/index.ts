@@ -1,13 +1,13 @@
-import { createId } from '@looplab/shared'
+import { createId } from '@trimmr/shared'
 import type {
   EditorProject,
   ExportFormat,
   ExportPreset,
   SourceMedia,
   SupportedImportFormat,
-} from '@looplab/shared'
+} from '@trimmr/shared'
 
-const DB_NAME = 'looplab'
+const DB_NAME = 'trimmr'
 const STORE_NAME = 'drafts'
 const LATEST_DRAFT_KEY = 'latest'
 const LATEST_SOURCE_BLOB_KEY = 'latest-source-blob'
@@ -82,10 +82,12 @@ async function loadFfmpeg() {
         deleteFile: (path: string) => Promise<void>
       }
       try {
-        const env = (import.meta as ImportMeta & { env?: { VITE_FFMPEG_CORE_BASE?: string } }).env
+        const env = (import.meta as ImportMeta & {
+          env?: { DEV?: boolean; VITE_FFMPEG_CORE_BASE?: string }
+        }).env
         const overrideBase = env?.VITE_FFMPEG_CORE_BASE?.replace(/\/$/, '')
         const useLocal =
-          import.meta.env.DEV &&
+          Boolean(env?.DEV) &&
           (!overrideBase || overrideBase === '' || overrideBase === 'local')
         const coreBase =
           overrideBase && overrideBase !== 'local'
@@ -258,16 +260,16 @@ async function finalizeExport({
 
       return {
         blob: transcoded.blob,
-        filename: `looplab-export-${Date.now()}.${transcoded.extension}`,
+        filename: `trimmr-export-${Date.now()}.${transcoded.extension}`,
         mimeType: transcoded.mimeType,
         requestedFormat: exportTarget.requestedFormat,
         outputFormat: exportTarget.requestedFormat,
       }
     } catch (error) {
-      console.error('Looplab export transcode failed; falling back to WebM output.', error)
+      console.error('trimmr export transcode failed; falling back to WebM output.', error)
       return {
         blob: recordedBlob,
-        filename: `looplab-export-${Date.now()}.${exportTarget.extension}`,
+        filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
         mimeType: exportTarget.outputMimeType,
         requestedFormat: exportTarget.requestedFormat,
         outputFormat: exportTarget.outputFormat,
@@ -277,7 +279,7 @@ async function finalizeExport({
 
   return {
     blob: recordedBlob,
-    filename: `looplab-export-${Date.now()}.${exportTarget.extension}`,
+    filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
     mimeType: exportTarget.outputMimeType,
     requestedFormat: exportTarget.requestedFormat,
     outputFormat: exportTarget.outputFormat,

@@ -1,5 +1,5 @@
-import { clipDurationMs, clamp, outputDurationMs, sourceTimeToOutputTimeMs } from '@looplab/shared'
-import type { EditorProject } from '@looplab/shared'
+import { clipDurationMs, clamp, outputDurationMs, sourceTimeToOutputTimeMs } from '@trimmr/shared'
+import type { EditorProject } from '@trimmr/shared'
 
 const DEFAULT_OVERLAY_FONT_FAMILY = 'Inter, system-ui, sans-serif'
 const DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.45

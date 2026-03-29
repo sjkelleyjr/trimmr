@@ -3,8 +3,8 @@ import {
   DEFAULT_EXPORT_PRESET,
   clamp,
   createId,
-} from '@looplab/shared'
-import type { EditorProject, SourceMedia, TextOverlay } from '@looplab/shared'
+} from '@trimmr/shared'
+import type { EditorProject, SourceMedia, TextOverlay } from '@trimmr/shared'
 
 const DEFAULT_OVERLAY_FONT_FAMILY = 'Inter, system-ui, sans-serif'
 const DEFAULT_OVERLAY_BACKGROUND_OPACITY = 0.45

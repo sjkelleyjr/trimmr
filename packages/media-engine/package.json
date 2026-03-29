@@ -1,5 +1,5 @@
 {
-  "name": "@looplab/media-engine",
+  "name": "@trimmr/media-engine",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,6 @@
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
-    "@looplab/shared": "*"
+    "@trimmr/shared": "*"
   }
 }

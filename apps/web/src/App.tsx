@@ -7,7 +7,7 @@ import {
   createHistory,
   redo,
   undo,
-} from '@looplab/editor-core'
+} from '@trimmr/editor-core'
 import {
   type ExportProgress,
   createProjectSummary,
@@ -17,15 +17,15 @@ import {
   extractSourceMedia,
   loadDraft,
   saveDraft,
-} from '@looplab/media-engine'
+} from '@trimmr/media-engine'
 import {
   clamp,
   formatDuration,
   lastSourceFrameTimeMs,
   outputDurationMs,
   timelineSnapshot,
-} from '@looplab/shared'
-import { Field, Panel, PrimaryButton, RangeField } from '@looplab/ui'
+} from '@trimmr/shared'
+import { Field, Panel, PrimaryButton, RangeField } from '@trimmr/ui'
 import './App.css'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import {
@@ -1025,7 +1025,7 @@ function App() {
       <section className="hero-section">
         <div>
           <p className="eyebrow">Free · Private · Secure · Open source</p>
-          <h1>Looplab</h1>
+          <h1>trimmr</h1>
           <p className="lede">
             Edit your videos in seconds. Your files never leave your computer—trim,
             caption, speed up or slow down, then export or convert to other video file formats (WebM, MP4,

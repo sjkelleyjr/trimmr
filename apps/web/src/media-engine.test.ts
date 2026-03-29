@@ -8,7 +8,7 @@ import {
   formatFileSize,
   loadDraft,
   saveDraft,
-} from '@looplab/media-engine'
+} from '@trimmr/media-engine'
 import { createProject } from './test/factories'
 
 function installIndexedDbMock() {
@@ -352,7 +352,7 @@ describe('media engine', () => {
 
     expect(captureStream).toHaveBeenCalledWith(10)
     expect(drawFrame).toHaveBeenCalledTimes(1)
-    expect(result.filename).toMatch(/^looplab-export-\d+\.webm$/)
+    expect(result.filename).toMatch(/^trimmr-export-\d+\.webm$/)
     expect(result.mimeType).toBe('video/webm')
     expect(result.blob.size).toBeGreaterThan(0)
   })

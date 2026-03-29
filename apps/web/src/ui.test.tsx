@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { Field, Panel, PrimaryButton, RangeField } from '@looplab/ui'
+import { Field, Panel, PrimaryButton, RangeField } from '@trimmr/ui'
 
 describe('ui package', () => {
   it('renders panels and fields with and without optional copy', () => {

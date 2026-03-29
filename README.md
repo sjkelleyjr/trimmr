@@ -1,6 +1,6 @@
-# Looplab
+# trimmr
 
-Looplab is a **free**, **private**, and **secure** open-source editor for animated media and video—your files **never leave your computer**. Edit trims and captions in seconds, then **export or convert to other video file formats** (WebM, MP4, and more) from the same workflow, with no upload and no account, **totally for free!**
+trimmr is a **free**, **private**, and **secure** open-source editor for animated media and video—your files **never leave your computer**. Edit trims and captions in seconds, then **export or convert to other video file formats** (WebM, MP4, and more) from the same workflow, with no upload and no account, **totally for free!**
 
 The first product wedge is animated internet media:
 

@@ -1,5 +1,5 @@
 {
-  "name": "looplab",
+  "name": "trimmr",
   "version": "0.1.0",
   "description": "Free, private, secure video editor—export or convert to other formats; files never leave your computer. No upload, no account, totally for free!",
   "scripts": {
@@ -25,6 +25,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sjkelleyjr/trimmr.git"
+  },
   "private": true,
   "type": "module",
   "engines": {
