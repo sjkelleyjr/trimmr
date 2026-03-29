@@ -7,13 +7,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const webPublic = path.join(root, 'apps/web/public')
 
-const pages = [
+const OG_IMAGE = 'https://trimmr.xyz/og-image.png'
+
+const workflowFiles = [
   { file: 'workflows/index.html', url: 'https://trimmr.xyz/workflows/index.html' },
   { file: 'workflows/trim-gif.html', url: 'https://trimmr.xyz/workflows/trim-gif.html' },
   { file: 'workflows/resize-gif.html', url: 'https://trimmr.xyz/workflows/resize-gif.html' },
   { file: 'workflows/add-text-to-gif.html', url: 'https://trimmr.xyz/workflows/add-text-to-gif.html' },
   { file: 'workflows/video-to-gif.html', url: 'https://trimmr.xyz/workflows/video-to-gif.html' },
   { file: 'workflows/gif-speed-changer.html', url: 'https://trimmr.xyz/workflows/gif-speed-changer.html' },
+]
+
+const pages = [
+  {
+    path: path.join(root, 'apps/web/index.html'),
+    label: 'apps/web/index.html',
+    url: 'https://trimmr.xyz/',
+    requireAppLink: false,
+  },
+  ...workflowFiles.map(({ file, url }) => ({
+    path: path.join(webPublic, file),
+    label: file,
+    url,
+    requireAppLink: true,
+  })),
 ]
 
 const sitemapPath = path.join(webPublic, 'sitemap.xml')
@@ -24,31 +41,37 @@ const robots = readFileSync(robotsPath, 'utf8')
 const failures = []
 
 for (const page of pages) {
-  const content = readFileSync(path.join(webPublic, page.file), 'utf8')
+  const content = readFileSync(page.path, 'utf8')
 
   if (!/<title>[\s\S]*<\/title>/i.test(content)) {
-    failures.push(`${page.file}: missing <title>`)
+    failures.push(`${page.label}: missing <title>`)
   }
   if (!/name="description"/i.test(content)) {
-    failures.push(`${page.file}: missing meta description`)
+    failures.push(`${page.label}: missing meta description`)
   }
   if (!new RegExp(`<link\\s+rel="canonical"\\s+href="${page.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
-    failures.push(`${page.file}: canonical does not match ${page.url}`)
+    failures.push(`${page.label}: canonical does not match ${page.url}`)
   }
   if (!/property="og:title"/i.test(content)) {
-    failures.push(`${page.file}: missing og:title`)
+    failures.push(`${page.label}: missing og:title`)
   }
   if (!/property="og:description"/i.test(content)) {
-    failures.push(`${page.file}: missing og:description`)
+    failures.push(`${page.label}: missing og:description`)
   }
   if (!/name="twitter:card"/i.test(content)) {
-    failures.push(`${page.file}: missing twitter:card`)
+    failures.push(`${page.label}: missing twitter:card`)
+  }
+  if (!new RegExp(`property="og:image"\\s+content="${OG_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
+    failures.push(`${page.label}: missing or wrong og:image (expected ${OG_IMAGE})`)
+  }
+  if (!new RegExp(`name="twitter:image"\\s+content="${OG_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
+    failures.push(`${page.label}: missing or wrong twitter:image (expected ${OG_IMAGE})`)
   }
   if (!/application\/ld\+json/i.test(content)) {
-    failures.push(`${page.file}: missing JSON-LD block`)
+    failures.push(`${page.label}: missing JSON-LD block`)
   }
-  if (!/href="\/(\?workflow=[a-z-]+)?"|href='\/(\?workflow=[a-z-]+)?'/i.test(content)) {
-    failures.push(`${page.file}: missing link back to app root`)
+  if (page.requireAppLink && !/href="\/(\?workflow=[a-z-]+)?"|href='\/(\?workflow=[a-z-]+)?'/i.test(content)) {
+    failures.push(`${page.label}: missing link back to app root`)
   }
 
   if (!sitemap.includes(`<loc>${page.url}</loc>`)) {
