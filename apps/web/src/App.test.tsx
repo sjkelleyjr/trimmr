@@ -1,0 +1,96 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createProject, createSourceMedia } from './test/factories'
+
+const mediaEngineMocks = vi.hoisted(() => ({
+  loadDraft: vi.fn(),
+  saveDraft: vi.fn(),
+  extractSourceMedia: vi.fn(),
+  exportPreviewToWebM: vi.fn(),
+  exportVideoProjectToWebM: vi.fn(),
+  downloadBlob: vi.fn(),
+  createProjectSummary: vi.fn(),
+}))
+
+const renderMocks = vi.hoisted(() => ({
+  drawProjectFrame: vi.fn(),
+  mapSourceTimeToOutputTime: vi.fn(() => 0),
+  mapOutputTimeToSourceTime: vi.fn(() => 0),
+  projectReadableDuration: vi.fn(() => 1000),
+}))
+
+vi.mock('@looplab/media-engine', () => mediaEngineMocks)
+vi.mock('./lib/renderProjectFrame', () => renderMocks)
+
+import App from './App'
+
+describe('App', () => {
+  beforeEach(() => {
+    mediaEngineMocks.loadDraft.mockResolvedValue(null)
+    mediaEngineMocks.saveDraft.mockResolvedValue(undefined)
+    mediaEngineMocks.extractSourceMedia.mockResolvedValue(createSourceMedia())
+    mediaEngineMocks.exportPreviewToWebM.mockResolvedValue({
+      blob: new Blob(['export']),
+      filename: 'export.webm',
+      mimeType: 'video/webm',
+      requestedFormat: 'webm',
+      outputFormat: 'webm',
+    })
+    mediaEngineMocks.exportVideoProjectToWebM.mockResolvedValue({
+      blob: new Blob(['export']),
+      filename: 'export.webm',
+      mimeType: 'video/webm',
+      requestedFormat: 'webm',
+      outputFormat: 'webm',
+    })
+    mediaEngineMocks.downloadBlob.mockImplementation(() => {})
+    mediaEngineMocks.createProjectSummary.mockReturnValue({
+      source: 'clip.mp4',
+      durationMs: 4000,
+      playbackRate: 1,
+      exportFormat: 'webm',
+    })
+    renderMocks.drawProjectFrame.mockResolvedValue(undefined)
+  })
+
+  it('restores a draft on startup', async () => {
+    const draft = createProject()
+    draft.overlays[0]!.text = 'Saved caption'
+    mediaEngineMocks.loadDraft.mockResolvedValue(draft)
+
+    render(<App />)
+
+    await screen.findByText('Saved caption')
+  })
+
+  it('imports media, updates the editor state, and exports', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]')
+
+    expect(fileInput).not.toBeNull()
+    await user.upload(fileInput! as HTMLInputElement, new File(['video'], 'demo.mp4', { type: 'video/mp4' }))
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.extractSourceMedia).toHaveBeenCalled()
+    })
+    expect(screen.getByText('Format')).toBeInTheDocument()
+    expect(screen.getByText('Dimensions')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Add caption' }))
+    const captionField = await screen.findByPlaceholderText('Caption text')
+    await user.type(captionField, 'Open source quality')
+    await user.tab()
+
+    const exportButton = screen.getByRole('button', { name: 'Export' })
+    await user.click(exportButton)
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.exportVideoProjectToWebM).toHaveBeenCalled()
+      expect(mediaEngineMocks.downloadBlob).toHaveBeenCalled()
+    })
+
+    expect(mediaEngineMocks.saveDraft).toHaveBeenCalled()
+  })
+})

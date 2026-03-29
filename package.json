@@ -1,0 +1,42 @@
+{
+  "name": "looplab",
+  "version": "0.1.0",
+  "description": "Free, private, secure video editor—export or convert to other formats; files never leave your computer. No upload, no account, totally for free!",
+  "scripts": {
+    "dev": "npm run dev -w apps/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck -w apps/web && tsc --noEmit -p packages/shared/tsconfig.json && tsc --noEmit -p packages/editor-core/tsconfig.json && tsc --noEmit -p packages/media-engine/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json",
+    "lint": "./node_modules/.bin/eslint --config eslint.config.js apps/web/src apps/web/tests packages playwright.config.ts vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
+    "test:e2e": "playwright test",
+    "generate:e2e-fixtures": "bash scripts/generate-e2e-fixtures.sh",
+    "seo:check": "node scripts/check-seo-pages.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test:coverage && npm run test:e2e"
+  },
+  "keywords": [
+    "video-editor",
+    "gif-editor",
+    "animated-webp",
+    "apng",
+    "private",
+    "secure",
+    "free"
+  ],
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "typescript": "~5.9.3",
+    "vitest": "^4.0.8"
+  }
+}

@@ -1,0 +1,141 @@
+:root {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  overflow-x: clip;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #09090b;
+  color: #e2e8f0;
+}
+
+.site-header {
+  border-bottom: 1px solid #1f2937;
+  background: #0b1220;
+}
+
+.site-header-inner {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 12px
+    max(20px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.site-header-brand {
+  color: #f8fafc;
+  font-weight: 700;
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.site-header-nav {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+
+.site-header-nav a {
+  color: #93c5fd;
+  text-decoration: none;
+  font-size: 0.95rem;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+main {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 40px max(20px, env(safe-area-inset-right)) 64px max(20px, env(safe-area-inset-left));
+  padding-bottom: max(64px, env(safe-area-inset-bottom));
+}
+
+h1 {
+  font-size: clamp(1.45rem, 4.5vw + 0.85rem, 2.25rem);
+}
+
+h1,
+h2 {
+  color: #f8fafc;
+  line-height: 1.2;
+}
+
+p,
+li {
+  color: #cbd5e1;
+  line-height: 1.7;
+}
+
+a {
+  color: #22d3ee;
+}
+
+.card {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 18px;
+  margin: 18px 0;
+}
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: #06b6d4;
+  color: #082f49;
+  text-decoration: none;
+  font-weight: 700;
+  max-width: 100%;
+  text-align: center;
+}
+
+.cta-wrap {
+  text-align: center;
+}
+
+nav ul {
+  padding-left: 18px;
+}
+
+@media (max-width: 520px) {
+  main {
+    padding-top: 28px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .site-header-inner {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+
+  .card {
+    padding: 14px;
+    margin: 14px 0;
+  }
+
+  .cta-wrap .cta {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
