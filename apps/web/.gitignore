@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 docs/
+
+# FFmpeg core copied from node_modules for dev; production uses CDN (see vite strip + media-engine).
+public/ffmpeg/ffmpeg-core.js
+public/ffmpeg/ffmpeg-core.wasm
