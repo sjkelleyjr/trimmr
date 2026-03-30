@@ -2,23 +2,37 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://trimmr.xyz/</loc>
-  </url>
-  <url>
-    <loc>https://trimmr.xyz/workflows/trim-gif.html</loc>
-  </url>
-  <url>
-    <loc>https://trimmr.xyz/workflows/index.html</loc>
-  </url>
-  <url>
-    <loc>https://trimmr.xyz/workflows/resize-gif.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
   </url>
   <url>
     <loc>https://trimmr.xyz/workflows/add-text-to-gif.html</loc>
-  </url>
-  <url>
-    <loc>https://trimmr.xyz/workflows/video-to-gif.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
   </url>
   <url>
     <loc>https://trimmr.xyz/workflows/gif-speed-changer.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://trimmr.xyz/workflows/index.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://trimmr.xyz/workflows/resize-gif.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://trimmr.xyz/workflows/trim-gif.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://trimmr.xyz/workflows/video-to-gif.html</loc>
+    <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
   </url>
 </urlset>

@@ -2,6 +2,10 @@
 
 trimmr is a **free**, **private**, and **secure** open-source editor for animated media and video—your files **never leave your computer**. Edit trims and captions in seconds, then **export or convert to other video file formats** (WebM, MP4, and more) from the same workflow, with no upload and no account, **totally for free!**
 
+**Live app:** [trimmr.xyz](https://trimmr.xyz/) · **Workflow guides:** [trimmr.xyz/workflows/](https://trimmr.xyz/workflows/)
+
+Consider adding a product screenshot image to this README (for GitHub social preview and for visitors browsing the repo).
+
 The first product wedge is animated internet media:
 
 - GIF
@@ -62,6 +66,8 @@ This repo is set up to behave like an open-source package, not a throwaway proto
 - `npm run lint`: lints app code, package code, and root configs
 - `npm run test:coverage`: runs unit and integration tests with enforced coverage thresholds
 - `npm run test:e2e`: runs the browser smoke test
+- `npm run seo:sitemap`: regenerates `apps/web/public/sitemap.xml` with `<lastmod>` from file dates
+- `npm run seo:check`: regenerates the sitemap, then validates SEO tags for all static pages
 - `npm run check`: runs the full quality gate locally
 
 Coverage is enforced at `>=95%` for statements, branches, functions, and lines across the application-specific logic layer:

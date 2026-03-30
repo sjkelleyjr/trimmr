@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SEO_PAGES } from './seo-config.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
@@ -9,29 +10,11 @@ const webPublic = path.join(root, 'apps/web/public')
 
 const OG_IMAGE = 'https://trimmr.xyz/og-image.png'
 
-const workflowFiles = [
-  { file: 'workflows/index.html', url: 'https://trimmr.xyz/workflows/index.html' },
-  { file: 'workflows/trim-gif.html', url: 'https://trimmr.xyz/workflows/trim-gif.html' },
-  { file: 'workflows/resize-gif.html', url: 'https://trimmr.xyz/workflows/resize-gif.html' },
-  { file: 'workflows/add-text-to-gif.html', url: 'https://trimmr.xyz/workflows/add-text-to-gif.html' },
-  { file: 'workflows/video-to-gif.html', url: 'https://trimmr.xyz/workflows/video-to-gif.html' },
-  { file: 'workflows/gif-speed-changer.html', url: 'https://trimmr.xyz/workflows/gif-speed-changer.html' },
-]
-
-const pages = [
-  {
-    path: path.join(root, 'apps/web/index.html'),
-    label: 'apps/web/index.html',
-    url: 'https://trimmr.xyz/',
-    requireAppLink: false,
-  },
-  ...workflowFiles.map(({ file, url }) => ({
-    path: path.join(webPublic, file),
-    label: file,
-    url,
-    requireAppLink: true,
-  })),
-]
+const pages = SEO_PAGES.map((entry) => ({
+  ...entry,
+  path: path.join(root, entry.relPath),
+  label: entry.relPath,
+}))
 
 const sitemapPath = path.join(webPublic, 'sitemap.xml')
 const robotsPath = path.join(webPublic, 'robots.txt')
@@ -39,6 +22,14 @@ const sitemap = readFileSync(sitemapPath, 'utf8')
 const robots = readFileSync(robotsPath, 'utf8')
 
 const failures = []
+
+function expectedLastmod(absPath) {
+  return statSync(absPath).mtime.toISOString().slice(0, 10)
+}
+
+function escapeForRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 for (const page of pages) {
   const content = readFileSync(page.path, 'utf8')
@@ -52,8 +43,8 @@ for (const page of pages) {
   if (!/<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="\/favicon\.svg"/i.test(content)) {
     failures.push(`${page.label}: missing favicon link to /favicon.svg`)
   }
-  if (!new RegExp(`<link\\s+rel="canonical"\\s+href="${page.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
-    failures.push(`${page.label}: canonical does not match ${page.url}`)
+  if (!new RegExp(`<link\\s+rel="canonical"\\s+href="${escapeForRegex(page.loc)}"`).test(content)) {
+    failures.push(`${page.label}: canonical does not match ${page.loc}`)
   }
   if (!/property="og:title"/i.test(content)) {
     failures.push(`${page.label}: missing og:title`)
@@ -64,10 +55,10 @@ for (const page of pages) {
   if (!/name="twitter:card"/i.test(content)) {
     failures.push(`${page.label}: missing twitter:card`)
   }
-  if (!new RegExp(`property="og:image"\\s+content="${OG_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
+  if (!new RegExp(`property="og:image"\\s+content="${escapeForRegex(OG_IMAGE)}"`).test(content)) {
     failures.push(`${page.label}: missing or wrong og:image (expected ${OG_IMAGE})`)
   }
-  if (!new RegExp(`name="twitter:image"\\s+content="${OG_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
+  if (!new RegExp(`name="twitter:image"\\s+content="${escapeForRegex(OG_IMAGE)}"`).test(content)) {
     failures.push(`${page.label}: missing or wrong twitter:image (expected ${OG_IMAGE})`)
   }
   if (!/application\/ld\+json/i.test(content)) {
@@ -77,8 +68,30 @@ for (const page of pages) {
     failures.push(`${page.label}: missing link back to app root`)
   }
 
-  if (!sitemap.includes(`<loc>${page.url}</loc>`)) {
-    failures.push(`sitemap.xml: missing ${page.url}`)
+  if (page.workflowGuide) {
+    if (!/href="\/workflows\/index\.html"/i.test(content)) {
+      failures.push(`${page.label}: workflow guide should link to /workflows/index.html (hub)`)
+    }
+  }
+
+  if (!sitemap.includes(`<loc>${page.loc}</loc>`)) {
+    failures.push(`sitemap.xml: missing <loc>${page.loc}</loc>`)
+  }
+
+  const locBlock = new RegExp(
+    `<loc>${escapeForRegex(page.loc)}</loc>\\s*<lastmod>(\\d{4}-\\d{2}-\\d{2})</lastmod>`,
+    'i',
+  )
+  const match = sitemap.match(locBlock)
+  if (!match) {
+    failures.push(`sitemap.xml: missing <lastmod> after <loc>${page.loc}</loc>`)
+  } else {
+    const expected = expectedLastmod(page.path)
+    if (match[1] !== expected) {
+      failures.push(
+        `sitemap.xml: lastmod for ${page.loc} is ${match[1]}, expected ${expected} (run npm run seo:sitemap)`,
+      )
+    }
   }
 }
 
@@ -94,4 +107,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 
-console.log(`SEO checks passed for ${pages.length} pages.`)
+console.log(`SEO checks passed for ${pages.length} pages (sitemap lastmod matches files).`)
