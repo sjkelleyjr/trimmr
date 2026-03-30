@@ -49,6 +49,9 @@ for (const page of pages) {
   if (!/name="description"/i.test(content)) {
     failures.push(`${page.label}: missing meta description`)
   }
+  if (!/<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="\/favicon\.svg"/i.test(content)) {
+    failures.push(`${page.label}: missing favicon link to /favicon.svg`)
+  }
   if (!new RegExp(`<link\\s+rel="canonical"\\s+href="${page.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(content)) {
     failures.push(`${page.label}: canonical does not match ${page.url}`)
   }
