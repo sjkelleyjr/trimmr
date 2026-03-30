@@ -8,6 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    channel: 'chromium',
     headless: true,
     actionTimeout: 30_000,
   },
