@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
+import { usePostHog } from '@posthog/react'
 import {
   applyCommand,
   commit,
@@ -28,6 +29,15 @@ import {
 import { Field, Panel, PrimaryButton, RangeField } from '@trimmr/ui'
 import './App.css'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import {
+  captureEvent,
+  captureExportFailed,
+  captureExportStarted,
+  captureExportSucceeded,
+  captureFeatureUsed,
+  registerSessionProperties,
+} from './lib/analytics'
+import { buildTrafficSourceProps } from './lib/trafficSource'
 import {
   drawProjectFrame,
   mapSourceTimeToOutputTime,
@@ -126,6 +136,7 @@ function VolumeIcon({
 }
 
 function App() {
+  const posthog = usePostHog()
   const workflowQuery = useMemo<WorkflowQueryValue | null>(() => {
     if (typeof window === 'undefined') {
       return null
@@ -189,6 +200,8 @@ function App() {
     fontSize: number
   } | null>(null)
   const workflowAppliedSourceIdRef = useRef<string | null>(null)
+  const hasCapturedSessionStartRef = useRef(false)
+  const hasCapturedWorkflowOpenRef = useRef<string | null>(null)
 
   const project = history.present
   const hasControllableAudio =
@@ -266,14 +279,44 @@ function App() {
   }, [])
   const updateTrim = useCallback(
     (partial: { trimStartMs?: number; trimEndMs?: number }) => {
+      const nextTrimStartMs = partial.trimStartMs ?? trimStartMs
+      const nextTrimEndMs = partial.trimEndMs ?? trimEndMs
       runCommand({
         type: 'set-trim',
-        trimStartMs: partial.trimStartMs ?? trimStartMs,
-        trimEndMs: partial.trimEndMs ?? trimEndMs,
+        trimStartMs: nextTrimStartMs,
+        trimEndMs: nextTrimEndMs,
+      })
+      captureFeatureUsed(posthog, 'trim')
+      captureEvent(posthog, 'trim_changed', {
+        trim_start_ms: Math.round(nextTrimStartMs),
+        trim_end_ms: Math.round(nextTrimEndMs),
       })
     },
-    [runCommand, trimEndMs, trimStartMs],
+    [posthog, runCommand, trimEndMs, trimStartMs],
   )
+
+  useEffect(() => {
+    if (hasCapturedSessionStartRef.current) {
+      return
+    }
+    hasCapturedSessionStartRef.current = true
+    const traffic = buildTrafficSourceProps(document.referrer, window.location.search)
+    captureEvent(posthog, 'session_started', {
+      page_path: window.location.pathname,
+      ...traffic,
+    })
+    registerSessionProperties(posthog, traffic)
+  }, [posthog])
+
+  useEffect(() => {
+    if (!workflowQuery || hasCapturedWorkflowOpenRef.current === workflowQuery) {
+      return
+    }
+    hasCapturedWorkflowOpenRef.current = workflowQuery
+    captureEvent(posthog, 'workflow_opened', {
+      workflow: workflowQuery,
+    })
+  }, [posthog, workflowQuery])
 
   useEffect(() => {
     if (!workflowQuery || !project.source) {
@@ -309,9 +352,13 @@ function App() {
         overlayId,
         text,
       })
+      captureFeatureUsed(posthog, 'overlay')
+      captureEvent(posthog, 'overlay_updated', {
+        action: 'text',
+      })
       closeOverlayEdit()
     },
-    [closeOverlayEdit, runCommand],
+    [closeOverlayEdit, posthog, runCommand],
   )
 
   const updateOverlayStyle = useCallback(
@@ -353,9 +400,13 @@ function App() {
       if (selectedOverlayId === overlayId) {
         setSelectedOverlayId(null)
       }
+      captureFeatureUsed(posthog, 'overlay')
+      captureEvent(posthog, 'overlay_updated', {
+        action: 'deleted',
+      })
       closeOverlayEdit()
     },
-    [closeOverlayEdit, dragOverlayPosition?.id, resizeOverlayFontSize?.id, runCommand, selectedOverlayId],
+    [closeOverlayEdit, dragOverlayPosition?.id, posthog, resizeOverlayFontSize?.id, runCommand, selectedOverlayId],
   )
 
   const handleAddOverlay = useCallback(() => {
@@ -374,7 +425,11 @@ function App() {
       setEditingOverlayId(nextOverlayId)
       setEditingOverlayText('')
     }
-  }, [history, project.overlays.length])
+    captureFeatureUsed(posthog, 'overlay')
+    captureEvent(posthog, 'overlay_updated', {
+      action: 'added',
+    })
+  }, [history, posthog, project.overlays.length])
 
   const copySelectedOverlay = useCallback(() => {
     if (!selectedOverlayId) {
@@ -883,6 +938,10 @@ function App() {
         return
       }
 
+      captureEvent(posthog, 'file_import_started', {
+        source_format: file.type || 'unknown',
+        source_bytes: file.size,
+      })
       setIsBusy(true)
       setStatus(`Importing ${file.name}...`)
 
@@ -891,13 +950,22 @@ function App() {
         runCommand({ type: 'set-source', source })
         setPlayheadMs(0)
         setStatus(`Imported ${source.name}. You can now trim, caption, and export.`)
+        captureEvent(posthog, 'file_import_succeeded', {
+          source_format: source.format,
+          source_kind: source.kind,
+          source_duration_ms: source.durationMs,
+          source_bytes: source.fileSizeBytes,
+        })
       } catch (error) {
+        captureEvent(posthog, 'file_import_failed', {
+          reason: error instanceof Error ? error.message : 'unknown',
+        })
         setStatus(error instanceof Error ? error.message : 'Import failed.')
       } finally {
         setIsBusy(false)
       }
     },
-    [runCommand],
+    [posthog, runCommand],
   )
 
   const handleExport = useCallback(async () => {
@@ -909,6 +977,7 @@ function App() {
     setExportProgressPct(0)
     setIsPlaying(false)
     setStatus(`Exporting ${project.source.name} as ${project.exportPreset.format.toUpperCase()}...`)
+    captureExportStarted(posthog, project.exportPreset.format, project.source.format)
 
     try {
       const preset = project.exportPreset
@@ -1000,13 +1069,40 @@ function App() {
           `Exported ${summary.source} (${formatDuration(summary.durationMs)} at ${summary.playbackRate}x) as ${result.outputFormat.toUpperCase()}.`,
         )
       }
+      captureExportSucceeded(
+        posthog,
+        result.requestedFormat,
+        result.outputFormat,
+        project.source.format,
+        summary.durationMs,
+      )
     } catch (error) {
+      captureExportFailed(
+        posthog,
+        project.exportPreset.format,
+        project.source.format,
+        error instanceof Error ? error.message : 'unknown',
+      )
       setStatus(error instanceof Error ? error.message : 'Export failed.')
     } finally {
       setExportProgressPct(0)
       setIsExporting(false)
     }
-  }, [hasControllableAudio, previewVolumePct, project])
+  }, [hasControllableAudio, posthog, previewVolumePct, project])
+
+  const updatePlaybackRate = useCallback(
+    (rate: number) => {
+      runCommand({
+        type: 'set-playback-rate',
+        playbackRate: rate,
+      })
+      captureFeatureUsed(posthog, 'playback_rate')
+      captureEvent(posthog, 'playback_rate_changed', {
+        playback_rate: rate,
+      })
+    },
+    [posthog, runCommand],
+  )
 
   useKeyboardShortcuts({
     onTogglePlayback: togglePlayback,
@@ -1396,12 +1492,7 @@ function App() {
               step={0.05}
               value={project.clip?.playbackRate ?? 1}
               hint={`${project.clip?.playbackRate ?? 1}x`}
-              onChange={(event) =>
-                runCommand({
-                  type: 'set-playback-rate',
-                  playbackRate: Number(event.target.value),
-                })
-              }
+              onChange={(event) => updatePlaybackRate(Number(event.target.value))}
             />
           </div>
           <div className="preview-export-row">

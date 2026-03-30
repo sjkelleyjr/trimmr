@@ -80,14 +80,17 @@ export interface TimelineSnapshot {
 
 export interface AnalyticsEvent {
   name:
-    | 'file_imported'
-    | 'import_failed'
+    | 'session_started'
+    | 'workflow_opened'
+    | 'file_import_started'
+    | 'file_import_succeeded'
+    | 'file_import_failed'
     | 'trim_changed'
     | 'playback_rate_changed'
+    | 'feature_used'
     | 'overlay_updated'
-    | 'draft_saved'
     | 'export_started'
-    | 'export_completed'
+    | 'export_succeeded'
     | 'export_failed'
   timestamp: string
   metadata?: Record<string, string | number | boolean>

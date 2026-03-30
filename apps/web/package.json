@@ -14,19 +14,21 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@posthog/react": "^1.8.2",
     "@trimmr/editor-core": "*",
     "@trimmr/media-engine": "*",
     "@trimmr/shared": "*",
     "@trimmr/ui": "*",
+    "posthog-js": "^1.364.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
-    "@testing-library/dom": "^10.4.1",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

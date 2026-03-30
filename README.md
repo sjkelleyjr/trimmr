@@ -47,6 +47,13 @@ npm install
 npm run dev
 ```
 
+Optional: enable PostHog product analytics for local/dev builds by setting:
+
+```bash
+VITE_PUBLIC_POSTHOG_TOKEN=phc_xxx
+VITE_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+```
+
 ## Quality gates
 
 This repo is set up to behave like an open-source package, not a throwaway prototype.
