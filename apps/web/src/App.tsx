@@ -1027,7 +1027,6 @@ function App() {
           <p className="eyebrow">Free · Private · Secure · Open source</p>
           <h1>
             <span className="hero-title-brand">trimmr</span>
-            <span className="hero-title-tagline">edit video in seconds for free</span>
           </h1>
           <p className="lede">
             Edit your videos in seconds. Your files never leave your computer—trim,
