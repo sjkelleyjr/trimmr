@@ -7,5 +7,7 @@ test('renders the editor shell', async ({ page }) => {
     page.getByRole('heading', { name: /trimmr.*edit video in seconds for free/i }),
   ).toBeVisible()
   await expect(page.getByText('Choose a file')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'workflows' })).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: /guides for how to trim, resize, convert to gif, and more/i }),
+  ).toBeVisible()
 })

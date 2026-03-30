@@ -1474,7 +1474,7 @@ function App() {
       </section>
 
       <footer className="app-footer">
-        <a href="/workflows/index.html">workflows</a>
+        <a href="/workflows/">guides for how to trim, resize, convert to gif, and more</a>
       </footer>
     </main>
   )
