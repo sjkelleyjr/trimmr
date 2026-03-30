@@ -41,6 +41,12 @@ export const SEO_PAGES = [
     workflowGuide: true,
   },
   {
+    relPath: 'apps/web/public/workflows/video-meme.html',
+    loc: `${SITE_ORIGIN}/workflows/video-meme.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
     relPath: 'apps/web/public/workflows/gif-speed-changer.html',
     loc: `${SITE_ORIGIN}/workflows/gif-speed-changer.html`,
     requireAppLink: true,

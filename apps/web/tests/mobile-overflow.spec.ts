@@ -9,7 +9,8 @@ const MOBILE_VIEWPORTS = [
 const PAGES = [
   { path: '/', name: 'editor' },
   { path: '/workflows/index.html', name: 'workflows hub' },
-  { path: '/workflows/video-to-gif.html', name: 'workflow landing' },
+  { path: '/workflows/video-to-gif.html', name: 'video to GIF workflow' },
+  { path: '/workflows/video-meme.html', name: 'video meme workflow' },
 ] as const
 
 async function horizontalOverflowPx(page: Page): Promise<number> {
