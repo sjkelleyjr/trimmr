@@ -33,6 +33,22 @@
   margin: 0;
   font-size: clamp(1.85rem, 5vw + 0.75rem, 4.8rem);
   line-height: 1.02;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.hero-title-brand {
+  display: block;
+}
+
+.hero-title-tagline {
+  display: block;
+  max-width: 22rem;
+  font-size: clamp(0.95rem, 2vw + 0.5rem, 1.35rem);
+  font-weight: 600;
+  color: #cbd5e1;
+  line-height: 1.2;
 }
 
 .lede {

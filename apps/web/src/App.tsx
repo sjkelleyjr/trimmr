@@ -1025,7 +1025,10 @@ function App() {
       <section className="hero-section">
         <div>
           <p className="eyebrow">Free · Private · Secure · Open source</p>
-          <h1>trimmr</h1>
+          <h1>
+            <span className="hero-title-brand">trimmr</span>
+            <span className="hero-title-tagline">edit video in seconds for free</span>
+          </h1>
           <p className="lede">
             Edit your videos in seconds. Your files never leave your computer—trim,
             caption, speed up or slow down, then export or convert to other video file formats (WebM, MP4,
