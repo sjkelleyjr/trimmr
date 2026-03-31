@@ -17,7 +17,7 @@
   </url>
   <url>
     <loc>https://trimmr.xyz/workflows/index.html</loc>
-    <lastmod>2026-03-30</lastmod>
+    <lastmod>2026-03-31</lastmod>
     <changefreq>monthly</changefreq>
   </url>
   <url>
@@ -28,6 +28,11 @@
   <url>
     <loc>https://trimmr.xyz/workflows/trim-gif.html</loc>
     <lastmod>2026-03-30</lastmod>
+    <changefreq>monthly</changefreq>
+  </url>
+  <url>
+    <loc>https://trimmr.xyz/workflows/trim-video.html</loc>
+    <lastmod>2026-03-31</lastmod>
     <changefreq>monthly</changefreq>
   </url>
   <url>

@@ -9,6 +9,7 @@ const MOBILE_VIEWPORTS = [
 const PAGES = [
   { path: '/', name: 'editor' },
   { path: '/workflows/index.html', name: 'workflows hub' },
+  { path: '/workflows/trim-video.html', name: 'trim video workflow' },
   { path: '/workflows/video-to-gif.html', name: 'video to GIF workflow' },
   { path: '/workflows/video-meme.html', name: 'video meme workflow' },
 ] as const

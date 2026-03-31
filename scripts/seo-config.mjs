@@ -41,6 +41,12 @@ export const SEO_PAGES = [
     workflowGuide: true,
   },
   {
+    relPath: 'apps/web/public/workflows/trim-video.html',
+    loc: `${SITE_ORIGIN}/workflows/trim-video.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
     relPath: 'apps/web/public/workflows/video-meme.html',
     loc: `${SITE_ORIGIN}/workflows/video-meme.html`,
     requireAppLink: true,
