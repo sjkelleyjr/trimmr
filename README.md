@@ -4,15 +4,6 @@ trimmr is a **free**, **private**, and **secure** open-source editor for animate
 
 **Live app:** [trimmr.xyz](https://trimmr.xyz/) · **Workflow guides:** [trimmr.xyz/workflows/](https://trimmr.xyz/workflows/)
 
-Consider adding a product screenshot image to this README (for GitHub social preview and for visitors browsing the repo).
-
-The first product wedge is animated internet media:
-
-- GIF
-- animated WebP
-- APNG
-- MP4 and WebM videos
-
 The first shipping workflow is intentionally narrow:
 
 1. Choose an animated asset or video from your computer.
@@ -27,7 +18,6 @@ The first shipping workflow is intentionally narrow:
 - **Private and secure**: processing stays on the user’s device; files are not uploaded to our servers.
 - **Fast** repeated utility workflows before creative-suite breadth.
 - Zero install (open the app and go).
-- Ads are deferred until the product shows clear product-market fit.
 
 ## Monorepo layout
 
@@ -36,10 +26,6 @@ The first shipping workflow is intentionally narrow:
 - `packages/editor-core`: project model, commands, undo/redo
 - `packages/media-engine`: import metadata, export helpers, draft persistence
 - `packages/ui`: reusable editor UI primitives
-- `docs/product-spec.md`: locked MVP scope
-- `docs/mvp-checklist.md`: implementation checklist
-- `docs/seo-entry-pages.md`: first SEO workflow pages
-- `docs/technical-foundation.md`: browser stack decisions and feasibility notes
 
 ## Local development
 
@@ -51,16 +37,7 @@ npm install
 npm run dev
 ```
 
-Optional: enable PostHog product analytics for local/dev builds by setting:
-
-```bash
-VITE_PUBLIC_POSTHOG_TOKEN=phc_xxx
-VITE_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
-```
-
 ## Quality gates
-
-This repo is set up to behave like an open-source package, not a throwaway prototype.
 
 - `npm run typecheck`: checks the app and all shared packages
 - `npm run lint`: lints app code, package code, and root configs
@@ -92,5 +69,3 @@ This repository currently contains:
 
 - improve animated image decoding beyond metadata-only fallback paths
 - add image and sticker overlays
-- add richer optimization presets and stronger export controls
-- expand from a single-clip workflow to multi-clip editing
