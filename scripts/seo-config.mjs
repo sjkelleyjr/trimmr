@@ -53,6 +53,18 @@ export const SEO_PAGES = [
     workflowGuide: true,
   },
   {
+    relPath: 'apps/web/public/workflows/trimmr-vs-kapwing.html',
+    loc: `${SITE_ORIGIN}/workflows/trimmr-vs-kapwing.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/trimmr-vs-ezgif.html',
+    loc: `${SITE_ORIGIN}/workflows/trimmr-vs-ezgif.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
     relPath: 'apps/web/public/workflows/gif-speed-changer.html',
     loc: `${SITE_ORIGIN}/workflows/gif-speed-changer.html`,
     requireAppLink: true,
