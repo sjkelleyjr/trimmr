@@ -6,6 +6,7 @@ import { createProject, createSourceMedia } from './test/factories'
 const mediaEngineMocks = vi.hoisted(() => ({
   loadDraft: vi.fn(),
   saveDraft: vi.fn(),
+  loadFfmpeg: vi.fn(),
   extractSourceMedia: vi.fn(),
   exportPreviewToWebM: vi.fn(),
   exportVideoProjectToWebM: vi.fn(),
@@ -32,6 +33,7 @@ describe('App', () => {
   beforeEach(() => {
     mediaEngineMocks.loadDraft.mockResolvedValue(null)
     mediaEngineMocks.saveDraft.mockResolvedValue(undefined)
+    mediaEngineMocks.loadFfmpeg.mockResolvedValue(undefined as never)
     mediaEngineMocks.extractSourceMedia.mockResolvedValue(createSourceMedia())
     mediaEngineMocks.exportPreviewToWebM.mockResolvedValue({
       blob: new Blob(['export']),

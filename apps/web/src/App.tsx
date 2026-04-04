@@ -17,6 +17,7 @@ import {
   exportVideoProjectToWebM,
   extractSourceMedia,
   loadDraft,
+  loadFfmpeg,
   saveDraft,
 } from '@trimmr/media-engine'
 import {
@@ -205,6 +206,7 @@ function App() {
   const hasCapturedWorkflowOpenRef = useRef<string | null>(null)
 
   const project = history.present
+  const sourceId = project.source?.id
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
@@ -617,6 +619,15 @@ function App() {
         setStatus('Draft save failed in this session.')
     })
   }, [project])
+
+  useEffect(() => {
+    if (sourceId === undefined) {
+      return
+    }
+    void loadFfmpeg().catch(() => {
+      /* Best-effort warm-up; export path will call loadFfmpeg again (singleton). */
+    })
+  }, [sourceId])
 
   const renderAt = useCallback(
     async (timeMs: number) => {

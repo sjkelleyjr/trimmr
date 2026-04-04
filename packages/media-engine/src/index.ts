@@ -31,6 +31,7 @@ import { detectAnimatedImageDurationMs, detectAudioTrackStatus } from './sourceM
 export type { ExportTarget } from './exportResolve'
 
 export { loadDraft, saveDraft } from './draftStorage'
+export { loadFfmpeg } from './ffmpegLoader'
 
 export interface MediaExportResult {
   blob: Blob
