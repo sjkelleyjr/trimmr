@@ -10,6 +10,8 @@
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:desktop": "playwright test --project=chrome-desktop",
+    "test:e2e:mobile": "playwright test --project=mobile-chrome --project=mobile-safari",
     "generate:e2e-fixtures": "bash scripts/generate-e2e-fixtures.sh",
     "seo:sitemap": "node scripts/generate-sitemap.mjs",
     "seo:check": "node scripts/generate-sitemap.mjs && node scripts/check-seo-pages.mjs",

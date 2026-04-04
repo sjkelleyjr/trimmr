@@ -42,7 +42,9 @@ npm run dev
 - `npm run typecheck`: checks the app and all shared packages
 - `npm run lint`: lints app code, package code, and root configs
 - `npm run test:coverage`: runs unit and integration tests with enforced coverage thresholds
-- `npm run test:e2e`: runs the browser smoke test
+- `npm run test:e2e`: runs Playwright (desktop + emulated mobile Chrome and mobile Safari). Install browsers once: `npx playwright install`
+- `npm run test:e2e:desktop`: desktop Chrome only
+- `npm run test:e2e:mobile`: `mobile-overflow` + `mobile-export` specs only (includes a bounded WebM export that fails if export hangs)
 - `npm run seo:sitemap`: regenerates `apps/web/public/sitemap.xml` with `<lastmod>` from file dates
 - `npm run seo:check`: regenerates the sitemap, then validates SEO tags for all static pages
 - `npm run check`: runs the full quality gate locally

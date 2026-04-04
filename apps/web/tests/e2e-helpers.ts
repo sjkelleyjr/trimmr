@@ -140,3 +140,26 @@ export async function exportAndAssertFormat(page: Page, format: E2eExportFormat)
   const buffer = await readDownloadBuffer(download)
   assertExportMatchesFormat(buffer, format, download.suggestedFilename())
 }
+
+/**
+ * Same as exporting WebM with a bounded wait — use on mobile projects to fail fast
+ * if the export pipeline hangs (stuck “Exporting…” / no download).
+ */
+export async function exportWebmWithin(page: Page, downloadTimeoutMs: number) {
+  await selectExportFormat(page, 'webm')
+
+  const exportButton = page.getByRole('button', { name: 'Export' })
+  await expect(exportButton).toBeEnabled()
+
+  const settleTimeout = Math.min(downloadTimeoutMs, 120_000)
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: downloadTimeoutMs }),
+    exportButton.click(),
+  ])
+
+  await expect(exportButton).toBeEnabled({ timeout: settleTimeout })
+
+  const buffer = await readDownloadBuffer(download)
+  assertExportMatchesFormat(buffer, 'webm', download.suggestedFilename())
+}
