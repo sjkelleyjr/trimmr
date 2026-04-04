@@ -47,6 +47,9 @@ const MIME_TYPE_BY_EXPORT_FORMAT: Record<ExportFormat, string> = {
   'animated-webp': 'image/webp',
 }
 
+/** WebKit/Safari often omit `dataavailable` chunks unless a timeslice is set. */
+const EXPORT_RECORDER_TIMESLICE_MS = 250
+
 /** Matches apps/web dependency @ffmpeg/core; ESM build required (module worker uses dynamic import). CDN keeps Pages deploys under asset size limits. */
 const FFMPEG_CORE_VERSION = '0.12.10'
 const FFMPEG_CORE_CDN_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`
@@ -240,13 +243,18 @@ async function finalizeExport({
   exportTarget,
   fps,
   onProgress,
+  recordedMimeType,
 }: {
   chunks: BlobPart[]
   exportTarget: ExportTarget
   fps: number
   onProgress?: (progress: ExportProgress) => void
+  /** Actual `MediaRecorder.mimeType` when codecs fall back (e.g. VP8 on WebKit). */
+  recordedMimeType?: string
 }): Promise<MediaExportResult> {
-  const recordedBlob = new Blob(chunks, { type: exportTarget.outputMimeType })
+  const blobMime =
+    recordedMimeType && recordedMimeType.length > 0 ? recordedMimeType : exportTarget.outputMimeType
+  const recordedBlob = new Blob(chunks, { type: blobMime })
 
   if (exportTarget.requestedFormat !== exportTarget.outputFormat) {
     try {
@@ -270,7 +278,7 @@ async function finalizeExport({
       return {
         blob: recordedBlob,
         filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
-        mimeType: exportTarget.outputMimeType,
+        mimeType: blobMime,
         requestedFormat: exportTarget.requestedFormat,
         outputFormat: exportTarget.outputFormat,
       }
@@ -280,7 +288,7 @@ async function finalizeExport({
   return {
     blob: recordedBlob,
     filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
-    mimeType: exportTarget.outputMimeType,
+    mimeType: blobMime,
     requestedFormat: exportTarget.requestedFormat,
     outputFormat: exportTarget.outputFormat,
   }
@@ -543,6 +551,92 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+function mimeTypeSupportedByRecorder(mime: string): boolean {
+  return (
+    typeof MediaRecorder !== 'undefined' &&
+    typeof MediaRecorder.isTypeSupported === 'function' &&
+    MediaRecorder.isTypeSupported(mime)
+  )
+}
+
+/**
+ * WebKit (Safari, Playwright webkit, iOS browsers) often fails to advance
+ * `HTMLMediaElement.currentTime` during `captureStream` + `MediaRecorder` export
+ * when driven by `play()` + timers. A seek + draw loop is slower but reliable.
+ */
+function isWebKitExportEngine(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+  const ua = navigator.userAgent
+  if (/Chrome|Chromium|CriOS|Edg|OPR/.test(ua)) {
+    return false
+  }
+  // Real Safari / Playwright WebKit include "Safari/" in the UA; jsdom typically does not.
+  return /AppleWebKit/.test(ua) && /Safari\//.test(ua)
+}
+
+/**
+ * WebKit often rejects VP9+Opus or hangs with empty chunks; try VP8 and plain webm.
+ */
+function createMediaRecorder(stream: MediaStream, preferredMimeType: string): MediaRecorder {
+  const fallbacks = [
+    preferredMimeType,
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ]
+  const seen = new Set<string>()
+  for (const mime of fallbacks) {
+    if (seen.has(mime)) {
+      continue
+    }
+    seen.add(mime)
+    if (!mimeTypeSupportedByRecorder(mime)) {
+      continue
+    }
+    try {
+      return new MediaRecorder(stream, { mimeType: mime })
+    } catch {
+      continue
+    }
+  }
+  try {
+    return new MediaRecorder(stream)
+  } catch (error) {
+    throw new Error(
+      `Could not create MediaRecorder: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+/** Safari/iOS may not advance playback on a detached export `<video>`. */
+function mountExportVideoInDocument(video: HTMLVideoElement): () => void {
+  if (typeof document === 'undefined' || !(video instanceof Node)) {
+    return () => {}
+  }
+
+  const shell = document.createElement('div')
+  shell.setAttribute('data-trimmr-export-video', '')
+  shell.setAttribute('aria-hidden', 'true')
+  shell.style.cssText =
+    'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.02;pointer-events:none;overflow:hidden;z-index:-1'
+  if (typeof video.setAttribute === 'function') {
+    video.setAttribute('playsinline', '')
+    video.setAttribute('webkit-playsinline', '')
+  }
+  video.playsInline = true
+  video.style.width = '2px'
+  video.style.height = '2px'
+  shell.appendChild(video)
+  document.body.appendChild(shell)
+  return () => {
+    shell.remove()
+  }
+}
+
 function waitForVideoMetadata(video: HTMLVideoElement) {
   if (video.readyState >= 1) {
     return Promise.resolve()
@@ -569,25 +663,73 @@ function waitForVideoMetadata(video: HTMLVideoElement) {
   })
 }
 
-function waitForSeek(video: HTMLVideoElement) {
+/**
+ * Seek and wait for the frame to be ready. Listeners must be registered **before**
+ * assigning `currentTime`, or `seeked` may fire synchronously and be missed (WebKit).
+ *
+ * Some WebKit builds leave `seeking === true` or omit `seeked` during capture/export;
+ * we poll `seeking` and use a hard timeout so export cannot hang indefinitely.
+ */
+function seekVideoToTime(video: HTMLVideoElement, seconds: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const handleSeeked = () => {
+    let settled = false
+    let pollId: number | undefined
+    let timeoutId: number | undefined
+
+    const finish = () => {
+      if (settled) {
+        return
+      }
+      settled = true
       cleanup()
       resolve()
     }
 
     const handleError = () => {
+      if (settled) {
+        return
+      }
+      settled = true
       cleanup()
       reject(new Error('Unable to seek export video'))
     }
 
     const cleanup = () => {
+      if (pollId !== undefined) {
+        window.clearInterval(pollId)
+        pollId = undefined
+      }
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId)
+        timeoutId = undefined
+      }
       video.removeEventListener('seeked', handleSeeked)
       video.removeEventListener('error', handleError)
     }
 
+    const handleSeeked = () => finish()
+
     video.addEventListener('seeked', handleSeeked, { once: true })
     video.addEventListener('error', handleError, { once: true })
+
+    video.currentTime = seconds
+
+    queueMicrotask(() => {
+      if (!video.seeking) {
+        finish()
+      }
+    })
+
+    pollId = window.setInterval(() => {
+      if (!video.seeking) {
+        finish()
+      }
+    }, 32)
+
+    // If `seeked`/`seeking` never settle (seen with WebKit + captureStream), still advance.
+    timeoutId = window.setTimeout(() => {
+      finish()
+    }, 500)
   })
 }
 
@@ -669,14 +811,14 @@ export async function exportPreviewToWebM({
   const exportTarget = resolveExportTarget(preset.format, false)
   const stream = canvas.captureStream(preset.fps)
   const chunks: BlobPart[] = []
-  const recorder = new MediaRecorder(stream, { mimeType: exportTarget.recorderMimeType })
+  const recorder = createMediaRecorder(stream, exportTarget.recorderMimeType)
   recorder.ondataavailable = (event) => {
     if (event.data.size > 0) {
       chunks.push(event.data)
     }
   }
 
-  recorder.start()
+  recorder.start(EXPORT_RECORDER_TIMESLICE_MS)
 
   const frameDurationMs = 1000 / preset.fps
   const safeDurationMs = Math.max(frameDurationMs, durationMs)
@@ -700,6 +842,8 @@ export async function exportPreviewToWebM({
     exportTarget,
     fps: preset.fps,
     onProgress,
+    recordedMimeType:
+      recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : undefined,
   })
 }
 
@@ -730,99 +874,173 @@ export async function exportVideoProjectToWebM({
   video.playsInline = true
   video.muted = true
 
-  await waitForVideoMetadata(video)
-  video.currentTime = trimStartMs / 1000
-  await waitForSeek(video)
-  video.playbackRate = playbackRate
+  const unmountVideo = mountExportVideoInDocument(video)
+  try {
+    await waitForVideoMetadata(video)
+    await seekVideoToTime(video, trimStartMs / 1000)
+    video.playbackRate = playbackRate
 
-  const canvasStream = canvas.captureStream(preset.fps)
-  const combinedStream = new MediaStream()
-  for (const track of canvasStream.getVideoTracks()) {
-    combinedStream.addTrack(track)
-  }
-
-  const sourceStream = captureElementStream(video)
-  const adjustedAudio = createAdjustedAudioStream(sourceStream, exportVolumeGain)
-  for (const track of adjustedAudio.stream?.getAudioTracks() ?? []) {
-    combinedStream.addTrack(track)
-  }
-
-  const chunks: BlobPart[] = []
-  const exportTarget = resolveExportTarget(preset.format, (sourceStream?.getAudioTracks()?.length ?? 0) > 0)
-  const recorder = new MediaRecorder(combinedStream, { mimeType: exportTarget.recorderMimeType })
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) {
-      chunks.push(event.data)
+    const canvasStream = canvas.captureStream(preset.fps)
+    const combinedStream = new MediaStream()
+    for (const track of canvasStream.getVideoTracks()) {
+      combinedStream.addTrack(track)
     }
-  }
 
-  const stopped = new Promise<void>((resolve) => {
-    recorder.onstop = () => resolve()
-  })
-
-  recorder.start()
-  await renderFrame(video)
-
-  const stopExport = () => {
-    if (recorder.state !== 'inactive') {
-      recorder.stop()
+    const useSeekBasedWebKitExport = isWebKitExportEngine()
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[trimmr] exportVideoProjectToWebM', {
+        useSeekBasedWebKitExport,
+        ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      })
     }
-    video.pause()
-    sourceStream?.getTracks().forEach((track: MediaStreamTrack) => track.stop())
-    adjustedAudio.cleanup()
-    canvasStream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
-  }
+    let sourceStream: ReturnType<typeof captureElementStream> = null
+    let adjustedAudio = createAdjustedAudioStream(null, exportVolumeGain)
 
-  await video.play()
+    if (!useSeekBasedWebKitExport) {
+      sourceStream = captureElementStream(video)
+      adjustedAudio = createAdjustedAudioStream(sourceStream, exportVolumeGain)
+      for (const track of adjustedAudio.stream?.getAudioTracks() ?? []) {
+        combinedStream.addTrack(track)
+      }
+    }
 
-  const videoDurationMs =
-    Number.isFinite(video.duration) && video.duration > 0
-      ? Math.round(video.duration * 1000)
-      : trimEndMs
-  const exportEndMs = Math.min(trimEndMs, videoDurationMs)
+    const chunks: BlobPart[] = []
+    const exportTarget = resolveExportTarget(
+      preset.format,
+      !useSeekBasedWebKitExport && (sourceStream?.getAudioTracks()?.length ?? 0) > 0,
+    )
+    const recorder = createMediaRecorder(combinedStream, exportTarget.recorderMimeType)
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data)
+      }
+    }
 
-  if (exportEndMs <= trimStartMs) {
+    const stopped = new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve()
+    })
+
+    recorder.start(EXPORT_RECORDER_TIMESLICE_MS)
     await renderFrame(video)
-    stopExport()
+
+    const stopExport = () => {
+      if (recorder.state !== 'inactive') {
+        try {
+          recorder.requestData()
+        } catch {
+          /* requestData is optional in older engines */
+        }
+        recorder.stop()
+      }
+      video.pause()
+      sourceStream?.getTracks().forEach((track: MediaStreamTrack) => track.stop())
+      adjustedAudio.cleanup()
+      canvasStream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
+    }
+
+    const videoDurationMs =
+      Number.isFinite(video.duration) && video.duration > 0
+        ? Math.round(video.duration * 1000)
+        : trimEndMs
+    const exportEndMs = Math.min(trimEndMs, videoDurationMs)
+
+    const recordedMimeType =
+      recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : undefined
+
+    if (exportEndMs <= trimStartMs) {
+      await renderFrame(video)
+      stopExport()
+      await stopped
+      return finalizeExport({
+        chunks,
+        exportTarget,
+        fps: preset.fps,
+        onProgress,
+        recordedMimeType,
+      })
+    }
+
+    const trimDuration = Math.max(1, exportEndMs - trimStartMs)
+    const frameDurationMs = 1000 / Math.max(1, preset.fps)
+
+    if (useSeekBasedWebKitExport) {
+      const frameDelayMs = Math.max(1, Math.round(frameDurationMs))
+      for (let tMs = trimStartMs; tMs < exportEndMs; tMs += frameDurationMs) {
+        await seekVideoToTime(video, tMs / 1000)
+        await renderFrame(video)
+        onProgress?.({
+          phase: 'render',
+          fraction: Math.min(1, Math.max(0, (tMs + frameDurationMs - trimStartMs) / trimDuration)),
+        })
+        // Wall-clock pacing so MediaRecorder + canvas.captureStream receive frames steadily (Safari).
+        await wait(frameDelayMs)
+      }
+      stopExport()
+    } else {
+      await video.play()
+
+      // Drive the export loop with a fixed timer instead of requestAnimationFrame.
+      // Some environments throttle rAF during capture/export.
+      const framePeriodMs = frameDurationMs
+      await new Promise<void>((resolve, reject) => {
+        let intervalId: number | undefined
+        let busy = false
+
+        const cleanupInterval = () => {
+          if (intervalId !== undefined) {
+            window.clearInterval(intervalId)
+            intervalId = undefined
+          }
+        }
+
+        const tick = async () => {
+          try {
+            if (video.currentTime * 1000 >= exportEndMs) {
+              cleanupInterval()
+              stopExport()
+              resolve()
+              return
+            }
+            if (busy) {
+              return
+            }
+            busy = true
+            await renderFrame(video)
+            busy = false
+
+            onProgress?.({
+              phase: 'render',
+              fraction: Math.min(
+                1,
+                Math.max(0, (video.currentTime * 1000 - trimStartMs) / trimDuration),
+              ),
+            })
+          } catch (error) {
+            cleanupInterval()
+            reject(error instanceof Error ? error : new Error(String(error)))
+          }
+        }
+
+        intervalId = window.setInterval(() => {
+          void tick()
+        }, framePeriodMs)
+
+        void tick()
+      })
+    }
+
     await stopped
+
     return finalizeExport({
       chunks,
       exportTarget,
       fps: preset.fps,
       onProgress,
+      recordedMimeType,
     })
+  } finally {
+    unmountVideo()
   }
-
-  await new Promise<void>((resolve) => {
-    const step = async () => {
-      if (video.currentTime * 1000 >= exportEndMs) {
-        stopExport()
-        resolve()
-        return
-      }
-
-      await renderFrame(video)
-      const trimDuration = Math.max(1, exportEndMs - trimStartMs)
-      onProgress?.({
-        phase: 'render',
-        fraction: Math.min(1, Math.max(0, (video.currentTime * 1000 - trimStartMs) / trimDuration)),
-      })
-      requestAnimationFrame(() => {
-        void step()
-      })
-    }
-
-    void step()
-  })
-
-  await stopped
-
-  return finalizeExport({
-    chunks,
-    exportTarget,
-    fps: preset.fps,
-    onProgress,
-  })
 }
 
 export function downloadBlob(result: MediaExportResult) {
@@ -830,6 +1048,27 @@ export function downloadBlob(result: MediaExportResult) {
   const anchor = document.createElement('a')
   anchor.href = objectUrl
   anchor.download = result.filename
+  anchor.rel = 'noopener'
+  anchor.style.display = 'none'
+
+  const body = typeof document !== 'undefined' ? document.body : null
+  if (body) {
+    body.appendChild(anchor)
+    try {
+      anchor.click()
+    } finally {
+      window.setTimeout(() => {
+        try {
+          body.removeChild(anchor)
+        } catch {
+          /* ignore */
+        }
+        URL.revokeObjectURL(objectUrl)
+      }, 1500)
+    }
+    return
+  }
+
   anchor.click()
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }

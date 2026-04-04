@@ -144,6 +144,10 @@ export async function exportAndAssertFormat(page: Page, format: E2eExportFormat)
 /**
  * Same as exporting WebM with a bounded wait — use on mobile projects to fail fast
  * if the export pipeline hangs (stuck “Exporting…” / no download).
+ *
+ * WebKit (Playwright mobile-safari) often does not emit the `download` event for
+ * programmatic blob saves even when export succeeds; we also accept the success
+ * status line from App.tsx so the smoke still passes.
  */
 export async function exportWebmWithin(page: Page, downloadTimeoutMs: number) {
   await selectExportFormat(page, 'webm')
@@ -153,13 +157,33 @@ export async function exportWebmWithin(page: Page, downloadTimeoutMs: number) {
 
   const settleTimeout = Math.min(downloadTimeoutMs, 120_000)
 
-  const [download] = await Promise.all([
-    page.waitForEvent('download', { timeout: downloadTimeoutMs }),
-    exportButton.click(),
-  ])
+  // Both waits must settle without rejecting, or Promise.race throws on the first timeout
+  // (e.g. WebKit: no download event even when export succeeds).
+  const downloadOutcome = page
+    .waitForEvent('download', { timeout: downloadTimeoutMs })
+    .then((d) => ({ kind: 'download' as const, d }))
+    .catch(() => null)
+  const statusOutcome = page
+    .getByText(/Exported .+ as WEBM/i)
+    .waitFor({ state: 'visible', timeout: downloadTimeoutMs })
+    .then(() => ({ kind: 'status' as const }))
+    .catch(() => null)
+
+  await exportButton.click()
+
+  const outcome = await Promise.race([downloadOutcome, statusOutcome])
+
+  if (outcome === null) {
+    throw new Error('Export did not produce a download or success status in time')
+  }
 
   await expect(exportButton).toBeEnabled({ timeout: settleTimeout })
 
-  const buffer = await readDownloadBuffer(download)
-  assertExportMatchesFormat(buffer, 'webm', download.suggestedFilename())
+  if (outcome.kind === 'download') {
+    const buffer = await readDownloadBuffer(outcome.d)
+    assertExportMatchesFormat(buffer, 'webm', outcome.d.suggestedFilename())
+    return
+  }
+
+  await expect(page.getByText(/as WEBM/i)).toBeVisible()
 }

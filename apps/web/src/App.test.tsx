@@ -94,6 +94,12 @@ describe('App', () => {
       expect(mediaEngineMocks.downloadBlob).toHaveBeenCalled()
     })
 
+    // Regression: success status must be rendered (not only setState) so WebKit e2e can
+    // assert export completion when Playwright does not emit a download event.
+    await waitFor(() => {
+      expect(screen.getByText(/Exported clip\.mp4.*as WEBM/i)).toBeInTheDocument()
+    })
+
     expect(mediaEngineMocks.saveDraft).toHaveBeenCalled()
   })
 })

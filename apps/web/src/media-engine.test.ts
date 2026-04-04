@@ -317,12 +317,15 @@ describe('media engine', () => {
 
     class FakeMediaRecorder {
       static isTypeSupported = vi.fn(() => false)
+      mimeType: string
       ondataavailable: null | ((event: { data: Blob }) => void) = null
       onstop: null | (() => void) = null
 
-      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
+      constructor(_stream: MediaStream, options?: { mimeType?: string }) {
+        this.mimeType = options?.mimeType ?? 'video/webm'
+      }
 
-      start() {}
+      start(_timeslice?: number) {}
 
       stop() {
         queueMicrotask(() => {
@@ -368,14 +371,16 @@ describe('media engine', () => {
 
     class FakeMediaRecorder {
       static isTypeSupported = vi.fn(() => true)
+      mimeType: string
       ondataavailable: null | ((event: { data: Blob }) => void) = null
       onstop: null | (() => void) = null
 
       constructor(_stream: MediaStream, recorderOptions: { mimeType: string }) {
+        this.mimeType = recorderOptions.mimeType
         options.push(recorderOptions)
       }
 
-      start() {}
+      start(_timeslice?: number) {}
 
       stop() {
         queueMicrotask(() => {
@@ -406,12 +411,16 @@ describe('media engine', () => {
   })
 
   it('exports video projects with audio tracks when captureStream is available', async () => {
-    const raf = vi
-      .spyOn(window, 'requestAnimationFrame')
-      .mockImplementation((callback: FrameRequestCallback) => {
-        setTimeout(() => callback(performance.now()), 0)
-        return 1
+    vi.spyOn(window, 'setInterval').mockImplementation((fn: TimerHandler) => {
+      queueMicrotask(async () => {
+        for (let i = 0; i < 10; i++) {
+          if (typeof fn === 'function') fn()
+          await Promise.resolve()
+        }
       })
+      return 1 as unknown as number
+    })
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => {})
 
     const canvasVideoTrack = { kind: 'video', stop: vi.fn() }
     const audioTrack = { kind: 'audio', stop: vi.fn() }
@@ -432,14 +441,24 @@ describe('media engine', () => {
     }
 
     class FakeMediaRecorder {
-      static isTypeSupported = vi.fn((mimeType: string) => mimeType === 'video/webm;codecs=vp9,opus')
+      static isTypeSupported = vi.fn(
+        (mimeType: string) =>
+          mimeType === 'video/webm;codecs=vp9,opus' ||
+          mimeType === 'video/webm;codecs=vp9' ||
+          mimeType === 'video/webm;codecs=vp8,opus' ||
+          mimeType === 'video/webm;codecs=vp8' ||
+          mimeType === 'video/webm',
+      )
+      mimeType: string
       ondataavailable: null | ((event: { data: Blob }) => void) = null
       onstop: null | (() => void) = null
       state: 'inactive' | 'recording' = 'inactive'
 
-      constructor(_stream: MediaStream, _options: { mimeType: string }) {}
+      constructor(_stream: MediaStream, options?: { mimeType?: string }) {
+        this.mimeType = options?.mimeType ?? 'video/webm;codecs=vp9,opus'
+      }
 
-      start() {
+      start(_timeslice?: number) {
         this.state = 'recording'
       }
 
@@ -525,8 +544,154 @@ describe('media engine', () => {
     expect(renderFrame).toHaveBeenCalled()
     expect(combinedTracks).toContain(canvasVideoTrack)
     expect(combinedTracks).toContain(audioTrack)
-    expect(result.mimeType).toBe('video/webm')
-    raf.mockRestore()
+    expect(result.mimeType.startsWith('video/webm')).toBe(true)
+  })
+
+  /**
+   * Regression: Safari / Playwright WebKit uses a seek-based export path. A stray
+   * reference to a removed `waitForSeek` helper caused ReferenceError and hung mobile export.
+   * Audio is omitted on this path (canvas + MediaRecorder only).
+   */
+  it('exports video projects on WebKit seek path without throwing', async () => {
+    const previousUa = navigator.userAgent
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
+    })
+
+    vi.spyOn(window, 'setTimeout').mockImplementation((fn: TimerHandler) => {
+      if (typeof fn === 'function') {
+        queueMicrotask(() => (fn as () => void)())
+      }
+      return 1 as unknown as number
+    })
+    vi.spyOn(window, 'setInterval').mockImplementation((fn: TimerHandler) => {
+      queueMicrotask(() => {
+        if (typeof fn === 'function') {
+          ;(fn as () => void)()
+        }
+      })
+      return 2 as unknown as number
+    })
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => {})
+    vi.spyOn(window, 'clearTimeout').mockImplementation(() => {})
+
+    const canvasVideoTrack = { kind: 'video', stop: vi.fn() }
+    const canvasStream = {
+      getVideoTracks: vi.fn(() => [canvasVideoTrack]),
+      getTracks: vi.fn(() => [canvasVideoTrack]),
+    } as unknown as MediaStream
+
+    const canvas = {
+      captureStream: vi.fn(() => canvasStream),
+    } as unknown as HTMLCanvasElement
+
+    const combinedTracks: unknown[] = []
+    class FakeMediaStream {
+      addTrack(track: unknown) {
+        combinedTracks.push(track)
+      }
+    }
+
+    class FakeMediaRecorder {
+      static isTypeSupported = vi.fn(
+        (mimeType: string) =>
+          mimeType === 'video/webm;codecs=vp9' ||
+          mimeType === 'video/webm;codecs=vp8' ||
+          mimeType === 'video/webm',
+      )
+      mimeType = 'video/webm;codecs=vp8'
+      ondataavailable: null | ((event: { data: Blob }) => void) = null
+      onstop: null | (() => void) = null
+      state: 'inactive' | 'recording' = 'inactive'
+
+      start(_timeslice?: number) {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        queueMicrotask(() => {
+          this.ondataavailable?.({ data: new Blob(['frame']) })
+          this.onstop?.()
+        })
+      }
+    }
+
+    vi.stubGlobal('MediaStream', FakeMediaStream as unknown as typeof MediaStream)
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder)
+
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName === 'video') {
+        let currentTime = 0
+        const listeners = new Map<string, EventListener>()
+
+        const video = {
+          src: '',
+          preload: '',
+          playsInline: false,
+          muted: false,
+          readyState: 1,
+          duration: 1,
+          addEventListener: vi.fn((name: string, handler: EventListener) => {
+            listeners.set(name, handler)
+          }),
+          removeEventListener: vi.fn((name: string) => {
+            listeners.delete(name)
+          }),
+          play: vi.fn(async () => {
+            currentTime = 0.1
+          }),
+          pause: vi.fn(),
+          get seeking() {
+            return false
+          },
+          get currentTime() {
+            return currentTime
+          },
+          set currentTime(value: number) {
+            currentTime = value
+            queueMicrotask(() => listeners.get('seeked')?.(new Event('seeked')))
+          },
+          playbackRate: 1,
+        }
+
+        return video as unknown as HTMLVideoElement
+      }
+
+      return originalCreateElement(tagName)
+    })
+
+    const renderFrame = vi.fn(async () => {})
+
+    try {
+      const result = await exportVideoProjectToWebM({
+        canvas,
+        sourceUrl: 'blob:video',
+        trimStartMs: 0,
+        trimEndMs: 100,
+        playbackRate: 1,
+        preset: {
+          format: 'webm',
+          width: 720,
+          height: 720,
+          fps: 10,
+        },
+        renderFrame,
+      })
+
+      expect(canvas.captureStream).toHaveBeenCalledWith(10)
+      expect(renderFrame).toHaveBeenCalled()
+      expect(combinedTracks).toEqual([canvasVideoTrack])
+      expect(result.mimeType.startsWith('video/webm')).toBe(true)
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        value: previousUa,
+      })
+    }
   })
 
   it('downloads blobs through an anchor element', () => {

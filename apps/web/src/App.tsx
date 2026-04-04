@@ -158,7 +158,7 @@ function App() {
   const [previewVolumePct, setPreviewVolumePct] = useState(100)
   const [isVolumeInteracting, setIsVolumeInteracting] = useState(false)
   const lastNonZeroVolumePctRef = useRef(100)
-  const [, setStatus] = useState('')
+  const [status, setStatus] = useState('')
   const [isBusy, setIsBusy] = useState(true)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgressPct, setExportProgressPct] = useState(0)
@@ -1140,6 +1140,11 @@ function App() {
               onChange={handleImport}
             />
           </label>
+          {status ? (
+            <p className="status" aria-live="polite">
+              {status}
+            </p>
+          ) : null}
         </div>
       </section>
 
