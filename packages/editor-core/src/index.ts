@@ -41,10 +41,50 @@ function normalizeProject(project: EditorProject): EditorProject {
   }
 }
 
-function cloneWithUpdatedAt(project: EditorProject): EditorProject {
-  const nextProject = structuredClone(project)
-  nextProject.updatedAt = new Date().toISOString()
-  return nextProject
+/** Structural equality for editor snapshots (order-sensitive arrays; key-order–insensitive objects). */
+export function editorProjectsEqual(a: EditorProject, b: EditorProject): boolean {
+  return deepEqual(a, b)
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) {
+    return true
+  }
+  if (a === null || b === null) {
+    return a === b
+  }
+  if (typeof a !== 'object' || typeof b !== 'object') {
+    return false
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {
+      return false
+    }
+    return a.every((value, index) => deepEqual(value, b[index]))
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) {
+    return false
+  }
+  const ao = a as Record<string, unknown>
+  const bo = b as Record<string, unknown>
+  const keysA = Object.keys(ao)
+  const keysB = new Set(Object.keys(bo))
+  if (keysA.length !== keysB.size) {
+    return false
+  }
+  for (const key of keysA) {
+    if (!keysB.has(key) || !deepEqual(ao[key], bo[key])) {
+      return false
+    }
+  }
+  return true
+}
+
+function touchProject(project: EditorProject): EditorProject {
+  return {
+    ...project,
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 export type EditorCommand =
@@ -142,35 +182,39 @@ export function applyCommand(project: EditorProject, command: EditorCommand): Ed
     return project
   }
 
+  const clip = project.clip
+
   switch (command.type) {
     case 'set-trim': {
       const trimStartMs = clamp(command.trimStartMs, 0, project.source.durationMs)
       const trimEndMs = clamp(command.trimEndMs, trimStartMs + 100, project.source.durationMs)
-      if (
-        trimStartMs === project.clip.trimStartMs &&
-        trimEndMs === project.clip.trimEndMs
-      ) {
+      if (trimStartMs === clip.trimStartMs && trimEndMs === clip.trimEndMs) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextClip = nextProject.clip as NonNullable<EditorProject['clip']>
-      nextClip.trimStartMs = trimStartMs
-      nextClip.trimEndMs = trimEndMs
-      return nextProject
+      return touchProject({
+        ...project,
+        clip: {
+          ...clip,
+          trimStartMs,
+          trimEndMs,
+        },
+      })
     }
     case 'set-playback-rate': {
       const playbackRate = clamp(command.playbackRate, 0.25, 3)
-      if (playbackRate === project.clip.playbackRate) {
+      if (playbackRate === clip.playbackRate) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextClip = nextProject.clip as NonNullable<EditorProject['clip']>
-      nextClip.playbackRate = playbackRate
-      return nextProject
+      return touchProject({
+        ...project,
+        clip: {
+          ...clip,
+          playbackRate,
+        },
+      })
     }
     case 'add-overlay': {
-      const nextProject = cloneWithUpdatedAt(project)
-      nextProject.overlays.push({
+      const newOverlay: TextOverlay = {
         id: createId('overlay'),
         text: command.text ?? '',
         x: clamp(command.x ?? 0.5, 0.05, 0.95),
@@ -183,30 +227,33 @@ export function applyCommand(project: EditorProject, command: EditorCommand): Ed
           0,
           1,
         ),
+      }
+      return touchProject({
+        ...project,
+        overlays: [...project.overlays, newOverlay],
       })
-      return nextProject
     }
     case 'delete-overlay': {
       const overlayExists = project.overlays.some((item) => item.id === command.overlayId)
       if (!overlayExists) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      nextProject.overlays = nextProject.overlays.filter((item) => item.id !== command.overlayId)
-      return nextProject
+      return touchProject({
+        ...project,
+        overlays: project.overlays.filter((item) => item.id !== command.overlayId),
+      })
     }
     case 'set-overlay-text': {
       const overlay = project.overlays.find((item) => item.id === command.overlayId)
       if (!overlay || command.text === overlay.text) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextOverlay = nextProject.overlays.find((item) => item.id === command.overlayId)
-      if (!nextOverlay) {
-        return project
-      }
-      nextOverlay.text = command.text
-      return nextProject
+      return touchProject({
+        ...project,
+        overlays: project.overlays.map((item) =>
+          item.id === command.overlayId ? { ...item, text: command.text } : item,
+        ),
+      })
     }
     case 'set-overlay-position': {
       const x = clamp(command.x, 0.05, 0.95)
@@ -215,14 +262,12 @@ export function applyCommand(project: EditorProject, command: EditorCommand): Ed
       if (!overlay || (x === overlay.x && y === overlay.y)) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextOverlay = nextProject.overlays.find((item) => item.id === command.overlayId)
-      if (!nextOverlay) {
-        return project
-      }
-      nextOverlay.x = x
-      nextOverlay.y = y
-      return nextProject
+      return touchProject({
+        ...project,
+        overlays: project.overlays.map((item) =>
+          item.id === command.overlayId ? { ...item, x, y } : item,
+        ),
+      })
     }
     case 'set-overlay-font-size': {
       const fontSize = Math.max(12, command.fontSize)
@@ -230,13 +275,12 @@ export function applyCommand(project: EditorProject, command: EditorCommand): Ed
       if (!overlay || fontSize === overlay.fontSize) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextOverlay = nextProject.overlays.find((item) => item.id === command.overlayId)
-      if (!nextOverlay) {
-        return project
-      }
-      nextOverlay.fontSize = fontSize
-      return nextProject
+      return touchProject({
+        ...project,
+        overlays: project.overlays.map((item) =>
+          item.id === command.overlayId ? { ...item, fontSize } : item,
+        ),
+      })
     }
     case 'set-overlay-style': {
       const overlay = project.overlays.find((item) => item.id === command.overlayId)
@@ -256,37 +300,39 @@ export function applyCommand(project: EditorProject, command: EditorCommand): Ed
         return project
       }
 
-      const nextProject = cloneWithUpdatedAt(project)
-      const nextOverlay = nextProject.overlays.find((item) => item.id === command.overlayId)
-      if (!nextOverlay) {
-        return project
-      }
-      nextOverlay.color = color
-      nextOverlay.fontFamily = fontFamily
-      nextOverlay.backgroundOpacity = backgroundOpacity
-      return nextProject
+      return touchProject({
+        ...project,
+        overlays: project.overlays.map((item) =>
+          item.id === command.overlayId ? { ...item, color, fontFamily, backgroundOpacity } : item,
+        ),
+      })
     }
     case 'set-export-size': {
       const width = clamp(command.width, 240, 1080)
       const height = clamp(command.height, 240, 1920)
-      if (
-        width === project.exportPreset.width &&
-        height === project.exportPreset.height
-      ) {
+      if (width === project.exportPreset.width && height === project.exportPreset.height) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      nextProject.exportPreset.width = width
-      nextProject.exportPreset.height = height
-      return nextProject
+      return touchProject({
+        ...project,
+        exportPreset: {
+          ...project.exportPreset,
+          width,
+          height,
+        },
+      })
     }
     case 'set-export-format': {
       if (command.format === project.exportPreset.format) {
         return project
       }
-      const nextProject = cloneWithUpdatedAt(project)
-      nextProject.exportPreset.format = command.format
-      return nextProject
+      return touchProject({
+        ...project,
+        exportPreset: {
+          ...project.exportPreset,
+          format: command.format,
+        },
+      })
     }
   }
 }
@@ -301,7 +347,7 @@ export function createHistory(initialProject: EditorProject = createEmptyProject
 
 export function commit(history: HistoryState, command: EditorCommand): HistoryState {
   const next = applyCommand(history.present, command)
-  if (JSON.stringify(next) === JSON.stringify(history.present)) {
+  if (next === history.present || deepEqual(next, history.present)) {
     return history
   }
 

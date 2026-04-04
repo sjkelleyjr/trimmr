@@ -983,7 +983,7 @@ function App() {
     try {
       const preset = project.exportPreset
       const handleExportProgress = ({ phase, fraction }: ExportProgress) => {
-        const clamped = Math.min(1, Math.max(0, fraction))
+        const clamped = clamp(fraction, 0, 1)
         if (phase === 'render') {
           setExportProgressPct(Math.max(3, Math.round(clamped * 70)))
           return

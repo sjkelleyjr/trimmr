@@ -5,6 +5,7 @@ import {
   createEmptyProject,
   createHistory,
   createProjectFromSource,
+  editorProjectsEqual,
   redo,
   undo,
 } from '@trimmr/editor-core'
@@ -193,6 +194,15 @@ describe('editor timeline model', () => {
     })
 
     expect(next).toBe(history)
+  })
+
+  it('compares projects with editorProjectsEqual (structural, not reference)', () => {
+    const a = createProject()
+    const b = structuredClone(a)
+    expect(editorProjectsEqual(a, b)).toBe(true)
+    const c = structuredClone(a)
+    c.overlays[0]!.text = 'changed'
+    expect(editorProjectsEqual(a, c)).toBe(false)
   })
 
   it('returns the original project for no-op trim, playback, position, size, and format updates', () => {

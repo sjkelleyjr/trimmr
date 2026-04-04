@@ -181,9 +181,13 @@ export async function exportWebmWithin(page: Page, downloadTimeoutMs: number) {
 
   if (outcome.kind === 'download') {
     const buffer = await readDownloadBuffer(outcome.d)
-    assertExportMatchesFormat(buffer, 'webm', outcome.d.suggestedFilename())
-    return
+    // WebKit sometimes fires `download` with an empty placeholder while the real save is blob-based;
+    // treat tiny payloads like the no-download case and require the success status line.
+    if (buffer.byteLength > 64) {
+      assertExportMatchesFormat(buffer, 'webm', outcome.d.suggestedFilename())
+      return
+    }
   }
 
-  await expect(page.getByText(/as WEBM/i)).toBeVisible()
+  await expect(page.getByText(/Exported .+ as WEBM/i)).toBeVisible({ timeout: settleTimeout })
 }

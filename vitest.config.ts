@@ -4,7 +4,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./apps/web/src/test/setup.ts'],
-    include: ['apps/web/src/**/*.test.ts', 'apps/web/src/**/*.test.tsx'],
+    include: [
+      'apps/web/src/**/*.test.ts',
+      'apps/web/src/**/*.test.tsx',
+      'packages/media-engine/src/**/*.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

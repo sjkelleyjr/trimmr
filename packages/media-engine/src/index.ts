@@ -1,16 +1,36 @@
 import { createId } from '@trimmr/shared'
-import type {
-  EditorProject,
-  ExportFormat,
-  ExportPreset,
-  SourceMedia,
-  SupportedImportFormat,
-} from '@trimmr/shared'
+import type { EditorProject, ExportFormat, ExportPreset, SourceMedia } from '@trimmr/shared'
+import {
+  buildTranscodeArgs,
+  detectImportFormat,
+  estimateBitrateKbps,
+  ffmpegTranscodeProgressFraction,
+  formatExportFilename,
+  MIME_TYPE_BY_EXPORT_FORMAT,
+  outputExtensionForTranscode,
+  playbackRenderProgressFraction,
+  previewRenderProgressFraction,
+  seekBasedRenderProgressFraction,
+} from './exportPure'
+import { isWebKitExportUserAgent, resolveExportTarget } from './exportResolve'
+import type { ExportTarget } from './exportResolve'
+import {
+  captureElementStream,
+  createAdjustedAudioStream,
+  createMediaRecorder,
+  EXPORT_RECORDER_TIMESLICE_MS,
+  mimeTypeSupportedByRecorder,
+  mountExportVideoInDocument,
+  seekVideoToTime,
+  wait,
+  waitForVideoMetadata,
+} from './exportVideoDom'
+import { loadFfmpeg } from './ffmpegLoader'
+import { detectAnimatedImageDurationMs, detectAudioTrackStatus } from './sourceMediaProbe'
 
-const DB_NAME = 'trimmr'
-const STORE_NAME = 'drafts'
-const LATEST_DRAFT_KEY = 'latest'
-const LATEST_SOURCE_BLOB_KEY = 'latest-source-blob'
+export type { ExportTarget } from './exportResolve'
+
+export { loadDraft, saveDraft } from './draftStorage'
 
 export interface MediaExportResult {
   blob: Blob
@@ -23,118 +43,6 @@ export interface MediaExportResult {
 export interface ExportProgress {
   phase: 'render' | 'transcode' | 'finalize'
   fraction: number
-}
-
-interface ExportTarget {
-  requestedFormat: ExportFormat
-  outputFormat: ExportFormat
-  outputMimeType: string
-  recorderMimeType: string
-  extension: string
-}
-
-interface RecorderTarget {
-  outputFormat: ExportFormat
-  outputMimeType: string
-  recorderMimeType: string
-  extension: string
-}
-
-const MIME_TYPE_BY_EXPORT_FORMAT: Record<ExportFormat, string> = {
-  webm: 'video/webm',
-  mp4: 'video/mp4',
-  gif: 'image/gif',
-  'animated-webp': 'image/webp',
-}
-
-/** WebKit/Safari often omit `dataavailable` chunks unless a timeslice is set. */
-const EXPORT_RECORDER_TIMESLICE_MS = 250
-
-/** Matches apps/web dependency @ffmpeg/core; ESM build required (module worker uses dynamic import). CDN keeps Pages deploys under asset size limits. */
-const FFMPEG_CORE_VERSION = '0.12.10'
-const FFMPEG_CORE_CDN_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`
-
-let ffmpegSingletonPromise: Promise<{
-  ffmpeg: {
-    load: (options: { coreURL: string; wasmURL: string; workerURL?: string }) => Promise<boolean>
-    on: (event: 'progress', callback: (event: { progress: number }) => void) => void
-    off: (event: 'progress', callback: (event: { progress: number }) => void) => void
-    writeFile: (path: string, data: Uint8Array) => Promise<void>
-    exec: (args: string[]) => Promise<number>
-    readFile: (path: string) => Promise<Uint8Array | ArrayBuffer>
-    deleteFile: (path: string) => Promise<void>
-  }
-  fetchFile: (file?: string | Blob | File) => Promise<Uint8Array>
-}> | null = null
-
-async function loadFfmpeg() {
-  if (!ffmpegSingletonPromise) {
-    ffmpegSingletonPromise = (async () => {
-      const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
-        import('@ffmpeg/ffmpeg'),
-        import('@ffmpeg/util'),
-      ])
-
-      const ffmpeg = new FFmpeg() as unknown as {
-        load: (options: { coreURL: string; wasmURL: string; workerURL?: string }) => Promise<boolean>
-        on: (event: 'progress', callback: (event: { progress: number }) => void) => void
-        off: (event: 'progress', callback: (event: { progress: number }) => void) => void
-        writeFile: (path: string, data: Uint8Array) => Promise<void>
-        exec: (args: string[]) => Promise<number>
-        readFile: (path: string) => Promise<Uint8Array | ArrayBuffer>
-        deleteFile: (path: string) => Promise<void>
-      }
-      try {
-        const env = (import.meta as ImportMeta & {
-          env?: { DEV?: boolean; VITE_FFMPEG_CORE_BASE?: string }
-        }).env
-        const overrideBase = env?.VITE_FFMPEG_CORE_BASE?.replace(/\/$/, '')
-        const useLocal =
-          Boolean(env?.DEV) &&
-          (!overrideBase || overrideBase === '' || overrideBase === 'local')
-        const coreBase =
-          overrideBase && overrideBase !== 'local'
-            ? overrideBase
-            : useLocal
-              ? null
-              : FFMPEG_CORE_CDN_BASE
-        const coreSrc = useLocal ? '/ffmpeg/ffmpeg-core.js' : `${coreBase}/ffmpeg-core.js`
-        const wasmSrc = useLocal ? '/ffmpeg/ffmpeg-core.wasm' : `${coreBase}/ffmpeg-core.wasm`
-        const coreURL = await toBlobURL(coreSrc, 'text/javascript')
-        const wasmURL = await toBlobURL(wasmSrc, 'application/wasm')
-        await ffmpeg.load({ coreURL, wasmURL })
-      } catch (error) {
-        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-        throw new Error(`Failed to load ffmpeg core assets for browser transcoding. ${detail}`)
-      }
-
-      return { ffmpeg, fetchFile }
-    })()
-  }
-
-  return ffmpegSingletonPromise
-}
-
-function buildTranscodeArgs(
-  outputFormat: ExportFormat,
-  inputFilename: string,
-  outputFilename: string,
-  fps: number,
-) {
-  if (outputFormat === 'mp4') {
-    return ['-i', inputFilename, '-movflags', '+faststart', outputFilename]
-  }
-
-  if (outputFormat === 'gif') {
-    const targetFps = Math.max(8, Math.min(30, Math.round(fps)))
-    return ['-i', inputFilename, '-vf', `fps=${targetFps}`, '-loop', '0', outputFilename]
-  }
-
-  if (outputFormat === 'animated-webp') {
-    return ['-i', inputFilename, '-loop', '0', outputFilename]
-  }
-
-  return ['-i', inputFilename, outputFilename]
 }
 
 async function transcodeBlob({
@@ -151,7 +59,7 @@ async function transcodeBlob({
   onProgress?: (progress: ExportProgress) => void
 }) {
   const { ffmpeg, fetchFile } = await loadFfmpeg()
-  const outputExtension = outputFormat === 'animated-webp' ? 'webp' : outputFormat
+  const outputExtension = outputExtensionForTranscode(outputFormat)
   const inputFilename = `input.${inputExtension}`
   const outputFilename = `output.${outputExtension}`
 
@@ -161,7 +69,7 @@ async function transcodeBlob({
     const handleProgress = (event: { progress: number }) => {
       onProgress?.({
         phase: 'transcode',
-        fraction: Math.min(1, Math.max(0, event.progress)),
+        fraction: ffmpegTranscodeProgressFraction(event.progress),
       })
     }
     ffmpeg.on('progress', handleProgress)
@@ -188,53 +96,6 @@ async function transcodeBlob({
     }
   } finally {
     await Promise.allSettled([ffmpeg.deleteFile(inputFilename), ffmpeg.deleteFile(outputFilename)])
-  }
-}
-
-function resolveExportTarget(requestedFormat: ExportFormat, hasAudio: boolean): ExportTarget {
-  const supportsMimeType = (mimeType: string) =>
-    typeof MediaRecorder !== 'undefined' &&
-    typeof MediaRecorder.isTypeSupported === 'function' &&
-    MediaRecorder.isTypeSupported(mimeType)
-
-  const webmRecorderMimeType = hasAudio
-    ? supportsMimeType('video/webm;codecs=vp9,opus')
-      ? 'video/webm;codecs=vp9,opus'
-      : supportsMimeType('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm'
-    : supportsMimeType('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm'
-
-  const recorderTarget: RecorderTarget = {
-    outputFormat: 'webm',
-    outputMimeType: 'video/webm',
-    recorderMimeType: webmRecorderMimeType,
-    extension: 'webm',
-  }
-
-  if (requestedFormat === 'mp4') {
-    const mp4RecorderMimeType = supportsMimeType('video/mp4;codecs=avc1.42E01E,mp4a.40.2')
-      ? 'video/mp4;codecs=avc1.42E01E,mp4a.40.2'
-      : supportsMimeType('video/mp4')
-        ? 'video/mp4'
-        : null
-
-    if (mp4RecorderMimeType) {
-      recorderTarget.outputFormat = 'mp4'
-      recorderTarget.outputMimeType = 'video/mp4'
-      recorderTarget.recorderMimeType = mp4RecorderMimeType
-      recorderTarget.extension = 'mp4'
-    }
-  }
-
-  return {
-    requestedFormat,
-    outputFormat: recorderTarget.outputFormat,
-    outputMimeType: recorderTarget.outputMimeType,
-    recorderMimeType: recorderTarget.recorderMimeType,
-    extension: recorderTarget.extension,
   }
 }
 
@@ -268,7 +129,7 @@ async function finalizeExport({
 
       return {
         blob: transcoded.blob,
-        filename: `trimmr-export-${Date.now()}.${transcoded.extension}`,
+        filename: formatExportFilename(Date.now(), transcoded.extension),
         mimeType: transcoded.mimeType,
         requestedFormat: exportTarget.requestedFormat,
         outputFormat: exportTarget.requestedFormat,
@@ -277,7 +138,7 @@ async function finalizeExport({
       console.error('trimmr export transcode failed; falling back to WebM output.', error)
       return {
         blob: recordedBlob,
-        filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
+        filename: formatExportFilename(Date.now(), exportTarget.extension),
         mimeType: blobMime,
         requestedFormat: exportTarget.requestedFormat,
         outputFormat: exportTarget.outputFormat,
@@ -287,214 +148,15 @@ async function finalizeExport({
 
   return {
     blob: recordedBlob,
-    filename: `trimmr-export-${Date.now()}.${exportTarget.extension}`,
+    filename: formatExportFilename(Date.now(), exportTarget.extension),
     mimeType: blobMime,
     requestedFormat: exportTarget.requestedFormat,
     outputFormat: exportTarget.outputFormat,
   }
 }
 
-function detectFormat(file: File): SupportedImportFormat {
-  if (file.type === 'video/mp4') return 'mp4'
-  if (file.type === 'video/webm') return 'webm'
-  if (file.type === 'image/gif') return 'gif'
-  if (file.type === 'image/webp') return 'animated-webp'
-  if (file.type === 'image/apng') return 'apng'
-  if (file.name.toLowerCase().endsWith('.apng')) return 'apng'
-  return 'unknown'
-}
-
-function estimateBitrateKbps(fileSizeBytes: number, durationMs: number) {
-  if (durationMs <= 0) {
-    return 0
-  }
-
-  return Math.max(1, Math.round((fileSizeBytes * 8) / (durationMs / 1000) / 1000))
-}
-
-function detectAudioTrackStatus(video: HTMLVideoElement): SourceMedia['audioTrackStatus'] {
-  const mediaWithAudioTracks = video as HTMLVideoElement & {
-    audioTracks?: { length: number }
-    mozHasAudio?: boolean
-    webkitAudioDecodedByteCount?: number
-    captureStream?: () => MediaStream
-    mozCaptureStream?: () => MediaStream
-  }
-
-  if (typeof mediaWithAudioTracks.mozHasAudio === 'boolean') {
-    // In some engines this can be false even when audio exists; avoid false negatives.
-    return mediaWithAudioTracks.mozHasAudio ? 'present' : 'unknown'
-  }
-
-  if (typeof mediaWithAudioTracks.audioTracks?.length === 'number') {
-    // Chromium frequently reports audioTracks.length = 0 even when audio is present.
-    // Treat zero as unknown to avoid false "no audio" UI states.
-    return mediaWithAudioTracks.audioTracks.length > 0 ? 'present' : 'unknown'
-  }
-
-  if (typeof mediaWithAudioTracks.webkitAudioDecodedByteCount === 'number') {
-    return mediaWithAudioTracks.webkitAudioDecodedByteCount > 0 ? 'present' : 'unknown'
-  }
-
-  if (typeof mediaWithAudioTracks.captureStream === 'function') {
-    try {
-      const trackCount = mediaWithAudioTracks.captureStream().getAudioTracks().length
-      return trackCount > 0 ? 'present' : 'unknown'
-    } catch {
-      return 'unknown'
-    }
-  }
-
-  if (typeof mediaWithAudioTracks.mozCaptureStream === 'function') {
-    try {
-      const trackCount = mediaWithAudioTracks.mozCaptureStream().getAudioTracks().length
-      return trackCount > 0 ? 'present' : 'unknown'
-    } catch {
-      return 'unknown'
-    }
-  }
-
-  return 'unknown'
-}
-
-async function detectAnimatedImageDurationMs(file: File, fallbackMs: number) {
-  if (typeof ImageDecoder === 'undefined' || !file.type) {
-    return fallbackMs
-  }
-
-  try {
-    const supported = await ImageDecoder.isTypeSupported(file.type)
-    if (!supported) {
-      return fallbackMs
-    }
-
-    const bytes = await file.arrayBuffer()
-    const decoder = new ImageDecoder({
-      type: file.type,
-      data: bytes,
-      preferAnimation: true,
-    })
-    await decoder.tracks.ready
-    const frameCount = decoder.tracks.selectedTrack?.frameCount ?? 0
-    if (frameCount < 1) {
-      decoder.close()
-      return fallbackMs
-    }
-
-    let totalDurationMs = 0
-    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-      const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true })
-      // VideoFrame.duration is microseconds; default to 100ms when absent.
-      totalDurationMs += Math.max(16, Math.round((decoded.image.duration ?? 100_000) / 1000))
-      decoded.image.close()
-    }
-    decoder.close()
-
-    return Math.max(1000, totalDurationMs)
-  } catch {
-    return fallbackMs
-  }
-}
-
-function openDraftDb() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1)
-
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(STORE_NAME)
-    }
-
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-  })
-}
-
-async function serializeSourceBlob(source: SourceMedia | null) {
-  if (!source || !source.objectUrl.startsWith('blob:') || typeof fetch !== 'function') {
-    return null
-  }
-
-  try {
-    const response = await fetch(source.objectUrl)
-    if (!response.ok) {
-      return null
-    }
-
-    return await response.blob()
-  } catch {
-    return null
-  }
-}
-
-export async function saveDraft(project: EditorProject) {
-  const db = await openDraftDb()
-  const sourceBlob = await serializeSourceBlob(project.source)
-
-  await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite')
-    const store = transaction.objectStore(STORE_NAME)
-    store.put(project, LATEST_DRAFT_KEY)
-    if (sourceBlob) {
-      store.put(sourceBlob, LATEST_SOURCE_BLOB_KEY)
-    } else {
-      store.delete(LATEST_SOURCE_BLOB_KEY)
-    }
-    transaction.oncomplete = () => resolve()
-    transaction.onerror = () => reject(transaction.error)
-  })
-
-  db.close()
-}
-
-export async function loadDraft() {
-  const db = await openDraftDb()
-  const { project, sourceBlob } = await new Promise<{
-    project: EditorProject | null
-    sourceBlob: Blob | null
-  }>((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly')
-    const store = transaction.objectStore(STORE_NAME)
-    const projectRequest = store.get(LATEST_DRAFT_KEY)
-    const sourceBlobRequest = store.get(LATEST_SOURCE_BLOB_KEY)
-    let completed = 0
-
-    const maybeResolve = () => {
-      completed += 1
-      if (completed === 2) {
-        resolve({
-          project: (projectRequest.result as EditorProject | undefined) ?? null,
-          sourceBlob: (sourceBlobRequest.result as Blob | undefined) ?? null,
-        })
-      }
-    }
-
-    projectRequest.onsuccess = maybeResolve
-    sourceBlobRequest.onsuccess = maybeResolve
-    projectRequest.onerror = () => reject(projectRequest.error)
-    sourceBlobRequest.onerror = () => reject(sourceBlobRequest.error)
-    transaction.onerror = () => reject(transaction.error)
-  })
-  db.close()
-
-  if (!project) {
-    return null
-  }
-
-  if (!project.source || !sourceBlob) {
-    return project
-  }
-
-  return {
-    ...project,
-    source: {
-      ...project.source,
-      objectUrl: URL.createObjectURL(sourceBlob),
-    },
-  }
-}
-
 export async function extractSourceMedia(file: File): Promise<SourceMedia> {
-  const format = detectFormat(file)
+  const format = detectImportFormat(file.type, file.name)
   const objectUrl = URL.createObjectURL(file)
 
   if (file.type.startsWith('video/')) {
@@ -547,254 +209,6 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
   }
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function mimeTypeSupportedByRecorder(mime: string): boolean {
-  return (
-    typeof MediaRecorder !== 'undefined' &&
-    typeof MediaRecorder.isTypeSupported === 'function' &&
-    MediaRecorder.isTypeSupported(mime)
-  )
-}
-
-/**
- * WebKit (Safari, Playwright webkit, iOS browsers) often fails to advance
- * `HTMLMediaElement.currentTime` during `captureStream` + `MediaRecorder` export
- * when driven by `play()` + timers. A seek + draw loop is slower but reliable.
- */
-function isWebKitExportEngine(): boolean {
-  if (typeof navigator === 'undefined') {
-    return false
-  }
-  const ua = navigator.userAgent
-  if (/Chrome|Chromium|CriOS|Edg|OPR/.test(ua)) {
-    return false
-  }
-  // Real Safari / Playwright WebKit include "Safari/" in the UA; jsdom typically does not.
-  return /AppleWebKit/.test(ua) && /Safari\//.test(ua)
-}
-
-/**
- * WebKit often rejects VP9+Opus or hangs with empty chunks; try VP8 and plain webm.
- */
-function createMediaRecorder(stream: MediaStream, preferredMimeType: string): MediaRecorder {
-  const fallbacks = [
-    preferredMimeType,
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ]
-  const seen = new Set<string>()
-  for (const mime of fallbacks) {
-    if (seen.has(mime)) {
-      continue
-    }
-    seen.add(mime)
-    if (!mimeTypeSupportedByRecorder(mime)) {
-      continue
-    }
-    try {
-      return new MediaRecorder(stream, { mimeType: mime })
-    } catch {
-      continue
-    }
-  }
-  try {
-    return new MediaRecorder(stream)
-  } catch (error) {
-    throw new Error(
-      `Could not create MediaRecorder: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
-}
-
-/** Safari/iOS may not advance playback on a detached export `<video>`. */
-function mountExportVideoInDocument(video: HTMLVideoElement): () => void {
-  if (typeof document === 'undefined' || !(video instanceof Node)) {
-    return () => {}
-  }
-
-  const shell = document.createElement('div')
-  shell.setAttribute('data-trimmr-export-video', '')
-  shell.setAttribute('aria-hidden', 'true')
-  shell.style.cssText =
-    'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.02;pointer-events:none;overflow:hidden;z-index:-1'
-  if (typeof video.setAttribute === 'function') {
-    video.setAttribute('playsinline', '')
-    video.setAttribute('webkit-playsinline', '')
-  }
-  video.playsInline = true
-  video.style.width = '2px'
-  video.style.height = '2px'
-  shell.appendChild(video)
-  document.body.appendChild(shell)
-  return () => {
-    shell.remove()
-  }
-}
-
-function waitForVideoMetadata(video: HTMLVideoElement) {
-  if (video.readyState >= 1) {
-    return Promise.resolve()
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    const handleLoadedMetadata = () => {
-      cleanup()
-      resolve()
-    }
-
-    const handleError = () => {
-      cleanup()
-      reject(new Error('Unable to load export video metadata'))
-    }
-
-    const cleanup = () => {
-      video.removeEventListener('loadedmetadata', handleLoadedMetadata)
-      video.removeEventListener('error', handleError)
-    }
-
-    video.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true })
-    video.addEventListener('error', handleError, { once: true })
-  })
-}
-
-/**
- * Seek and wait for the frame to be ready. Listeners must be registered **before**
- * assigning `currentTime`, or `seeked` may fire synchronously and be missed (WebKit).
- *
- * Some WebKit builds leave `seeking === true` or omit `seeked` during capture/export;
- * we poll `seeking` and use a hard timeout so export cannot hang indefinitely.
- */
-function seekVideoToTime(video: HTMLVideoElement, seconds: number): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let settled = false
-    let pollId: number | undefined
-    let timeoutId: number | undefined
-
-    const finish = () => {
-      if (settled) {
-        return
-      }
-      settled = true
-      cleanup()
-      resolve()
-    }
-
-    const handleError = () => {
-      if (settled) {
-        return
-      }
-      settled = true
-      cleanup()
-      reject(new Error('Unable to seek export video'))
-    }
-
-    const cleanup = () => {
-      if (pollId !== undefined) {
-        window.clearInterval(pollId)
-        pollId = undefined
-      }
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId)
-        timeoutId = undefined
-      }
-      video.removeEventListener('seeked', handleSeeked)
-      video.removeEventListener('error', handleError)
-    }
-
-    const handleSeeked = () => finish()
-
-    video.addEventListener('seeked', handleSeeked, { once: true })
-    video.addEventListener('error', handleError, { once: true })
-
-    video.currentTime = seconds
-
-    queueMicrotask(() => {
-      if (!video.seeking) {
-        finish()
-      }
-    })
-
-    pollId = window.setInterval(() => {
-      if (!video.seeking) {
-        finish()
-      }
-    }, 32)
-
-    // If `seeked`/`seeking` never settle (seen with WebKit + captureStream), still advance.
-    timeoutId = window.setTimeout(() => {
-      finish()
-    }, 500)
-  })
-}
-
-function captureElementStream(video: HTMLVideoElement) {
-  const captureVideo = video as HTMLVideoElement & {
-    captureStream?: () => MediaStream
-    mozCaptureStream?: () => MediaStream
-  }
-
-  if (typeof captureVideo.captureStream === 'function') {
-    return captureVideo.captureStream()
-  }
-
-  if (typeof captureVideo.mozCaptureStream === 'function') {
-    return captureVideo.mozCaptureStream()
-  }
-
-  return null
-}
-
-function createAdjustedAudioStream(sourceStream: MediaStream | null, gain: number) {
-  const audioTracks = sourceStream?.getAudioTracks() ?? []
-  if (audioTracks.length === 0) {
-    return {
-      stream: null as MediaStream | null,
-      cleanup: () => {},
-    }
-  }
-
-  const normalizedGain = Math.max(0, gain)
-  if (normalizedGain === 1 || typeof AudioContext === 'undefined') {
-    return {
-      stream: sourceStream,
-      cleanup: () => {},
-    }
-  }
-
-  try {
-    const audioContext = new AudioContext()
-    const sourceNode = audioContext.createMediaStreamSource(sourceStream!)
-    const gainNode = audioContext.createGain()
-    const destination = audioContext.createMediaStreamDestination()
-
-    gainNode.gain.value = normalizedGain
-    sourceNode.connect(gainNode)
-    gainNode.connect(destination)
-
-    return {
-      stream: destination.stream,
-      cleanup: () => {
-        sourceNode.disconnect()
-        gainNode.disconnect()
-        if (audioContext.state !== 'closed') {
-          void audioContext.close()
-        }
-      },
-    }
-  } catch {
-    return {
-      stream: sourceStream,
-      cleanup: () => {},
-    }
-  }
-}
-
 export async function exportPreviewToWebM({
   canvas,
   drawFrame,
@@ -808,7 +222,7 @@ export async function exportPreviewToWebM({
   preset: ExportPreset
   onProgress?: (progress: ExportProgress) => void
 }): Promise<MediaExportResult> {
-  const exportTarget = resolveExportTarget(preset.format, false)
+  const exportTarget = resolveExportTarget(preset.format, false, mimeTypeSupportedByRecorder)
   const stream = canvas.captureStream(preset.fps)
   const chunks: BlobPart[] = []
   const recorder = createMediaRecorder(stream, exportTarget.recorderMimeType)
@@ -821,13 +235,12 @@ export async function exportPreviewToWebM({
   recorder.start(EXPORT_RECORDER_TIMESLICE_MS)
 
   const frameDurationMs = 1000 / preset.fps
-  const safeDurationMs = Math.max(frameDurationMs, durationMs)
   for (let timeMs = 0; timeMs < durationMs; timeMs += frameDurationMs) {
     await drawFrame(timeMs)
     await wait(frameDurationMs)
     onProgress?.({
       phase: 'render',
-      fraction: Math.min(1, Math.max(0, (timeMs + frameDurationMs) / safeDurationMs)),
+      fraction: previewRenderProgressFraction(timeMs, frameDurationMs, durationMs),
     })
   }
 
@@ -886,13 +299,8 @@ export async function exportVideoProjectToWebM({
       combinedStream.addTrack(track)
     }
 
-    const useSeekBasedWebKitExport = isWebKitExportEngine()
-    if (typeof console !== 'undefined' && console.debug) {
-      console.debug('[trimmr] exportVideoProjectToWebM', {
-        useSeekBasedWebKitExport,
-        ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-      })
-    }
+    const useSeekBasedWebKitExport =
+      typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent)
     let sourceStream: ReturnType<typeof captureElementStream> = null
     let adjustedAudio = createAdjustedAudioStream(null, exportVolumeGain)
 
@@ -908,6 +316,7 @@ export async function exportVideoProjectToWebM({
     const exportTarget = resolveExportTarget(
       preset.format,
       !useSeekBasedWebKitExport && (sourceStream?.getAudioTracks()?.length ?? 0) > 0,
+      mimeTypeSupportedByRecorder,
     )
     const recorder = createMediaRecorder(combinedStream, exportTarget.recorderMimeType)
     recorder.ondataavailable = (event) => {
@@ -970,7 +379,12 @@ export async function exportVideoProjectToWebM({
         await renderFrame(video)
         onProgress?.({
           phase: 'render',
-          fraction: Math.min(1, Math.max(0, (tMs + frameDurationMs - trimStartMs) / trimDuration)),
+          fraction: seekBasedRenderProgressFraction(
+            tMs,
+            frameDurationMs,
+            trimStartMs,
+            trimDuration,
+          ),
         })
         // Wall-clock pacing so MediaRecorder + canvas.captureStream receive frames steadily (Safari).
         await wait(frameDelayMs)
@@ -1010,9 +424,10 @@ export async function exportVideoProjectToWebM({
 
             onProgress?.({
               phase: 'render',
-              fraction: Math.min(
-                1,
-                Math.max(0, (video.currentTime * 1000 - trimStartMs) / trimDuration),
+              fraction: playbackRenderProgressFraction(
+                video.currentTime * 1000,
+                trimStartMs,
+                trimDuration,
               ),
             })
           } catch (error) {
