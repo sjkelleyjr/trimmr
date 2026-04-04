@@ -31,6 +31,11 @@ export function syncCanvasSize(canvas: HTMLCanvasElement, project: EditorProject
   }
 }
 
+/** CSS `aspect-ratio` for the preview so letterboxing matches `drawCover` on the export canvas. */
+export function exportAspectRatioCss(preset: { width: number; height: number }): string {
+  return `${preset.width} / ${preset.height}`
+}
+
 export async function seekVideo(video: HTMLVideoElement, timeMs: number) {
   if (video.readyState < 1) {
     await new Promise<void>((resolve, reject) => {
@@ -214,7 +219,7 @@ function drawOverlay(
   context.roundRect(px - boxWidth / 2, py - boxHeight / 2, boxWidth, boxHeight, 16)
   context.fill()
   context.fillStyle = color
-  context.fillText(text, px, py + 2)
+  context.fillText(text, px, py)
 }
 
 export function projectReadableDuration(project: EditorProject) {

@@ -40,6 +40,7 @@ import {
 import { buildTrafficSourceProps } from './lib/trafficSource'
 import {
   drawProjectFrame,
+  exportAspectRatioCss,
   mapSourceTimeToOutputTime,
   mapOutputTimeToSourceTime,
   projectReadableDuration,
@@ -1149,6 +1150,7 @@ function App() {
             <canvas
               ref={canvasRef}
               className={`preview-canvas ${project.source?.kind === 'video' ? 'is-hidden' : ''}`}
+              style={{ aspectRatio: exportAspectRatioCss(project.exportPreset) }}
             />
             {project.source?.kind === 'video' ? (
               <>
@@ -1158,6 +1160,7 @@ function App() {
                   playsInline
                   preload="metadata"
                   className="preview-video"
+                  style={{ aspectRatio: exportAspectRatioCss(project.exportPreset) }}
                 />
               </>
             ) : null}

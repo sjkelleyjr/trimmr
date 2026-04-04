@@ -15,6 +15,9 @@ const mediaEngineMocks = vi.hoisted(() => ({
 
 const renderMocks = vi.hoisted(() => ({
   drawProjectFrame: vi.fn(),
+  exportAspectRatioCss: vi.fn(
+    (preset: { width: number; height: number }) => `${preset.width} / ${preset.height}`,
+  ),
   mapSourceTimeToOutputTime: vi.fn(() => 0),
   mapOutputTimeToSourceTime: vi.fn(() => 0),
   projectReadableDuration: vi.fn(() => 1000),

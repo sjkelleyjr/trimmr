@@ -125,7 +125,6 @@
 .preview-canvas {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
   background: #020617;
 }
 
@@ -136,7 +135,6 @@
 .preview-video {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
   object-fit: contain;
   background: #020617;
 }

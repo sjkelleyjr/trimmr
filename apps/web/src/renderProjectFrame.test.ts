@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   clipReadableDuration,
   drawProjectFrame,
+  exportAspectRatioCss,
   mapOutputTimeToSourceTime,
   mapSourceTimeToOutputTime,
   projectReadableDuration,
@@ -43,6 +44,11 @@ describe('renderProjectFrame helpers', () => {
 
     expect(canvas.width).toBe(960)
     expect(canvas.height).toBe(540)
+  })
+
+  it('exports a CSS aspect-ratio string aligned with the export preset', () => {
+    expect(exportAspectRatioCss({ width: 720, height: 1280 })).toBe('720 / 1280')
+    expect(exportAspectRatioCss({ width: 960, height: 540 })).toBe('960 / 540')
   })
 
   it('does not resize the canvas when dimensions already match the preset', () => {
@@ -93,6 +99,55 @@ describe('renderProjectFrame helpers', () => {
     await seekVideo(video, 1010)
 
     expect(video.addEventListener).not.toHaveBeenCalled()
+  })
+
+  it('anchors overlay text at normalized x/y without vertical nudge', async () => {
+    const project = createProject({
+      source: {
+        ...createProject().source!,
+        kind: 'animated-image',
+      },
+    })
+    project.exportPreset.width = 100
+    project.exportPreset.height = 100
+    project.overlays[0]!.text = 'Hi'
+    project.overlays[0]!.x = 0.5
+    project.overlays[0]!.y = 0.5
+
+    const image = {
+      naturalWidth: 400,
+      naturalHeight: 200,
+    } as HTMLImageElement
+
+    const context = {
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi.fn(),
+      measureText: vi.fn(() => ({ width: 20 })),
+      fillText: vi.fn(),
+    }
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement
+
+    await drawProjectFrame({
+      canvas,
+      project,
+      sourceVideo: null,
+      sourceImage: image,
+      outputTimeMs: 0,
+    })
+
+    expect(context.fillText).toHaveBeenCalledWith('Hi', 50, 50)
   })
 
   it('draws image frames and overlays onto the canvas', async () => {
