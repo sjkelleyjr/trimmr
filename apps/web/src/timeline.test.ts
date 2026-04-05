@@ -37,6 +37,15 @@ describe('shared timeline helpers', () => {
     expect(projectDurationMs(project)).toBe(8_000)
   })
 
+  it('does not round output duration down to zero for a non-empty trim', () => {
+    const project = createProject()
+    project.clip!.trimStartMs = 0
+    project.clip!.trimEndMs = 1
+    project.clip!.playbackRate = 100
+    expect(clipDurationMs(project.clip!)).toBe(1)
+    expect(outputDurationMs(project.clip!)).toBe(1)
+  })
+
   it('returns zero duration when there is no clip', () => {
     const project = createProject({ clip: null, source: null })
     expect(projectDurationMs(project)).toBe(0)

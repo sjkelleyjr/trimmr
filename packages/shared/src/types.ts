@@ -25,6 +25,8 @@ export interface SourceMedia {
   estimatedBitrateKbps: number
   audioTrackStatus: AudioTrackStatus
   frameRate?: number
+  /** WebKit: same file as `objectUrl`; assign to `<video>.srcObject` to avoid blob-URL seek churn. */
+  videoSrcBlob?: Blob
 }
 
 export interface CropRect {

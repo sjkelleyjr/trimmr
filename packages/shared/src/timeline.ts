@@ -49,7 +49,14 @@ export function clipDurationMs(clip: TimelineClip) {
 }
 
 export function outputDurationMs(clip: TimelineClip) {
-  return Math.round(clipDurationMs(clip) / clip.playbackRate)
+  const d = clipDurationMs(clip)
+  if (d <= 0) {
+    return 0
+  }
+  const rounded = Math.round(d / clip.playbackRate)
+  // Avoid 0 when the trim is non-empty: rounding can yield 0 at extreme playback rates and
+  // breaks timeline mapping (output 0 would be treated as "at end").
+  return Math.max(1, rounded)
 }
 
 export function sourceTimeToOutputTimeMs(clip: TimelineClip, sourceTimeMs: number) {

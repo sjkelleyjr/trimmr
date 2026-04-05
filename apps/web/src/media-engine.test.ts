@@ -68,6 +68,7 @@ function installIndexedDbMock() {
 
 describe('media engine', () => {
   it('saves and loads drafts through indexedDB', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
     const { db } = installIndexedDbMock()
     const project = createProject()
 
@@ -105,6 +106,7 @@ describe('media engine', () => {
     expect(fetch).toHaveBeenCalledWith('blob:source-before-refresh')
     expect(URL.createObjectURL).toHaveBeenCalled()
     expect(loaded?.source?.objectUrl).toBe('blob:source-after-refresh')
+    expect(loaded?.source?.videoSrcBlob).toBeInstanceOf(Blob)
   })
 
   it('rejects draft operations when indexedDB fails to open', async () => {
@@ -148,9 +150,8 @@ describe('media engine', () => {
       return originalCreateElement(tagName)
     })
 
-    const source = await extractSourceMedia(
-      new File(['video'], 'demo.mp4', { type: 'video/mp4' }),
-    )
+    const file = new File(['video'], 'demo.mp4', { type: 'video/mp4' })
+    const source = await extractSourceMedia(file)
 
     expect(source).toMatchObject({
       name: 'demo.mp4',
@@ -165,6 +166,7 @@ describe('media engine', () => {
       estimatedBitrateKbps: 1,
       audioTrackStatus: 'unknown',
     })
+    expect(source.videoSrcBlob).toBe(file)
   })
 
   it('extracts animated-image metadata and falls back to octet-stream mime types', async () => {

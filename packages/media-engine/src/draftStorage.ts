@@ -98,6 +98,7 @@ export async function loadDraft() {
     source: {
       ...project.source,
       objectUrl: URL.createObjectURL(sourceBlob),
+      ...(project.source.kind === 'video' ? { videoSrcBlob: sourceBlob } : {}),
     },
   }
 }

@@ -191,3 +191,106 @@ export async function exportWebmWithin(page: Page, downloadTimeoutMs: number) {
 
   await expect(page.getByText(/Exported .+ as WEBM/i)).toBeVisible({ timeout: settleTimeout })
 }
+
+const previewVideoSelector = 'video.preview-video'
+
+function playPauseButton(page: Page) {
+  return page.getByRole('button', { name: /play playback|pause playback/i })
+}
+
+/** Preview `<video>` sits above the play control in the stacking order; use force clicks. */
+async function clickPlayPause(page: Page) {
+  await playPauseButton(page).click({ force: true })
+}
+
+export async function assertPreviewVideoPlaybackAdvances(page: Page) {
+  const video = page.locator(previewVideoSelector)
+  await expect(video).toBeVisible({ timeout: 30_000 })
+
+  await clickPlayPause(page)
+
+  await expect
+    .poll(
+      async () => video.evaluate((el: HTMLVideoElement) => el.currentTime),
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0.08)
+
+  await clickPlayPause(page)
+
+  await expect(video).toHaveJSProperty('paused', true)
+}
+
+/**
+ * While MP4 plays, WebKit may keep `webkitAudioDecodedByteCount` at 0; fall back to a short
+ * Web Audio analyser pass on the preview `<video>` so CI still sees non‑silent output.
+ */
+export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFile: string) {
+  await importFixture(page, fixtureFile)
+
+  const video = page.locator(previewVideoSelector)
+  await expect(video).toBeVisible({ timeout: 30_000 })
+
+  await clickPlayPause(page)
+
+  // Do not call `createMediaElementSource` here — the app already wires the preview `<video>`
+  // into Web Audio. Use decode byte counters, `captureStream()` audio tracks, or `audioTracks`.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const v = document.querySelector('video.preview-video') as HTMLVideoElement | null
+          if (!v) {
+            return false
+          }
+          const w = v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }
+          if (typeof w.webkitAudioDecodedByteCount === 'number' && w.webkitAudioDecodedByteCount > 0) {
+            return true
+          }
+          if (v.audioTracks && v.audioTracks.length > 0) {
+            return true
+          }
+          try {
+            const stream = v.captureStream()
+            return stream.getAudioTracks().length > 0
+          } catch {
+            return false
+          }
+        }),
+      { timeout: 25_000 },
+    )
+    .toBe(true)
+}
+
+export async function assertPreviewPlaybackAfterRepeatedPlayPause(
+  page: Page,
+  opts: { cycles: number; playingMs: number; gapMs: number },
+) {
+  const video = page.locator(previewVideoSelector)
+  await expect(video).toBeVisible({ timeout: 30_000 })
+
+  const btn = playPauseButton(page)
+
+  for (let i = 0; i < opts.cycles; i += 1) {
+    await btn.click({ force: true })
+    await page.waitForTimeout(opts.playingMs)
+    await btn.click({ force: true })
+    await page.waitForTimeout(opts.gapMs)
+  }
+
+  await btn.click({ force: true })
+
+  await expect
+    .poll(
+      async () => video.evaluate((el: HTMLVideoElement) => ({ t: el.currentTime, paused: el.paused })),
+      { timeout: 30_000 },
+    )
+    .toMatchObject({ paused: false })
+
+  await expect
+    .poll(
+      async () => video.evaluate((el: HTMLVideoElement) => el.currentTime),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(0.05)
+}

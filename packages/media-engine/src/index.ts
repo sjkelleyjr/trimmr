@@ -156,6 +156,8 @@ async function finalizeExport({
   }
 }
 
+export { isWebKitExportUserAgent } from './exportResolve'
+
 export async function extractSourceMedia(file: File): Promise<SourceMedia> {
   const format = detectImportFormat(file.type, file.name)
   const objectUrl = URL.createObjectURL(file)
@@ -183,6 +185,7 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
       fileSizeBytes: file.size,
       estimatedBitrateKbps: estimateBitrateKbps(file.size, Math.round(video.duration * 1000)),
       audioTrackStatus: detectAudioTrackStatus(video),
+      videoSrcBlob: file,
     }
   }
 

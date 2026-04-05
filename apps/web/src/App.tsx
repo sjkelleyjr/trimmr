@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { usePostHog } from '@posthog/react'
 import {
@@ -16,10 +16,12 @@ import {
   exportPreviewToWebM,
   exportVideoProjectToWebM,
   extractSourceMedia,
+  isWebKitExportUserAgent,
   loadDraft,
   loadFfmpeg,
   saveDraft,
 } from '@trimmr/media-engine'
+import type { EditorProject } from '@trimmr/shared'
 import {
   clamp,
   formatDuration,
@@ -45,7 +47,55 @@ import {
   mapSourceTimeToOutputTime,
   mapOutputTimeToSourceTime,
   projectReadableDuration,
+  seekVideo,
 } from './lib/renderProjectFrame'
+
+/** Debounced paused preview: overlapping `seekVideo` on one element freezes WebKit. */
+const PAUSED_VIDEO_SYNC_DEBOUNCE_MS = 120
+
+/** Draft save re-fetches the full source blob — never run on every trim tick. */
+const SAVE_DRAFT_DEBOUNCE_MS = 650
+
+/** PostHog trim events while dragging — debounce so we do not enqueue hundreds of calls. */
+const TRIM_ANALYTICS_DEBOUNCE_MS = 450
+
+/** Map output-timeline ms → source media ms; always pass current `project` (e.g. from `projectRef`) to avoid stale closures. */
+function pausedPreviewSourceMs(project: EditorProject, outputTimeMs: number): number {
+  if (!project.clip) {
+    return 0
+  }
+
+  const maxOut = outputDurationMs(project.clip)
+  if (maxOut <= 0) {
+    return lastSourceFrameTimeMs(project.clip)
+  }
+
+  const t = Number.isFinite(outputTimeMs) ? outputTimeMs : 0
+  const bounded = clamp(t, 0, maxOut)
+  if (bounded >= maxOut) {
+    return lastSourceFrameTimeMs(project.clip)
+  }
+
+  return mapOutputTimeToSourceTime(project, bounded)
+}
+
+function scrubLog(...args: unknown[]) {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    if (
+      !import.meta.env.DEV &&
+      !new URLSearchParams(window.location.search).has('debugScrub') &&
+      window.localStorage.getItem('trimmr_debug_scrub') !== '1'
+    ) {
+      return
+    }
+  } catch {
+    return
+  }
+  console.log('[trimmr:scrub]', ...args)
+}
 
 const FONT_OPTIONS = [
   { label: 'Sans', value: 'Inter, system-ui, sans-serif' },
@@ -155,6 +205,10 @@ function App() {
   }, [])
   const [history, setHistory] = useState(() => createHistory(createEmptyProject()))
   const [playheadMs, setPlayheadMs] = useState(0)
+  /** While a trim/playhead range is held, skip syncing `video.currentTime` — Safari freezes on per-tick seeks. */
+  const [timelinePointerActive, setTimelinePointerActive] = useState(false)
+  /** True while dragging trim start/end (not the playhead). */
+  const [trimPointerActive, setTrimPointerActive] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [previewVolumePct, setPreviewVolumePct] = useState(100)
   const [isVolumeInteracting, setIsVolumeInteracting] = useState(false)
@@ -176,6 +230,12 @@ function App() {
   const animationRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number | null>(null)
   const playheadRef = useRef(0)
+  /** Last playhead output-ms while dragging; WebKit often leaves `range.value` at 0 on release. */
+  const scrubPlayheadOutputMsRef = useRef(0)
+  const playheadRangeRef = useRef<HTMLInputElement | null>(null)
+  const pausedPreviewSeekGenerationRef = useRef(0)
+  /** True while playhead range is held; used to skip debounced seek on scrub end (flush already seeks). */
+  const wasTimelinePointerActiveRef = useRef(false)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const mediaSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null)
@@ -204,9 +264,34 @@ function App() {
   const workflowAppliedSourceIdRef = useRef<string | null>(null)
   const hasCapturedSessionStartRef = useRef(false)
   const hasCapturedWorkflowOpenRef = useRef<string | null>(null)
+  const trimAnalyticsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const project = history.present
+  const projectRef = useRef(project)
+  projectRef.current = project
+  const isPlayingRef = useRef(isPlaying)
+  isPlayingRef.current = isPlaying
   const sourceId = project.source?.id
+  const isWebKit = useMemo(
+    () => typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent),
+    [],
+  )
+
+  useLayoutEffect(() => {
+    const video = videoRef.current
+    const source = project.source
+    if (!video || source?.kind !== 'video') {
+      return
+    }
+
+    if (isWebKit && source.videoSrcBlob instanceof Blob) {
+      video.srcObject = source.videoSrcBlob
+      video.removeAttribute('src')
+    } else {
+      video.srcObject = null
+    }
+  }, [isWebKit, project.source])
+
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
@@ -231,24 +316,59 @@ function App() {
     )
   }, [playheadMs, project])
 
-  const getVideoPreviewSourceTimeMs = useCallback(
-    (outputTimeMs: number) => {
-      if (!project.clip) {
-        return 0
+  const flushPausedVideoSeek = useCallback(async () => {
+    const video = videoRef.current
+    const p = projectRef.current
+    if (!video || !p.clip || p.source?.kind !== 'video') {
+      scrubLog('flush: skip (no video clip)')
+      return
+    }
+    if (isPlayingRef.current) {
+      scrubLog('flush: skip (playing)')
+      return
+    }
+    const maxOut = outputDurationMs(p.clip)
+    // Do not read `range.value` here — it can be stale on WebKit; `playheadRef` is synced from
+    // `input` / scrub ref on pointer-up.
+    const outputMs = clamp(playheadRef.current, 0, maxOut)
+    const sourceMs = pausedPreviewSourceMs(p, outputMs)
+    video.playbackRate = p.clip.playbackRate
+    const gen = ++pausedPreviewSeekGenerationRef.current
+    scrubLog('flush: seekVideo start', { outputMs, sourceMs, gen })
+    try {
+      await Promise.race([
+        seekVideo(video, sourceMs),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error('paused seek timeout')), 12_000),
+        ),
+      ])
+      if (gen !== pausedPreviewSeekGenerationRef.current) {
+        scrubLog('flush: stale after seek', { gen, current: pausedPreviewSeekGenerationRef.current })
+        return
       }
-
-      if (outputTimeMs >= maxOutputDurationMs) {
-        return lastSourceFrameTimeMs(project.clip)
-      }
-
-      return mapOutputTimeToSourceTime(project, outputTimeMs)
-    },
-    [maxOutputDurationMs, project],
-  )
+      scrubLog('flush: seekVideo ok', { currentTime: video.currentTime })
+    } catch (e) {
+      scrubLog('flush: seek failed', e)
+    }
+  }, [])
 
   useEffect(() => {
     playheadRef.current = playheadMs
   }, [playheadMs])
+
+  useEffect(() => {
+    if (timelinePointerActive) {
+      return
+    }
+    scrubPlayheadOutputMsRef.current = playheadMs
+  }, [playheadMs, timelinePointerActive])
+
+  const handlePlayheadRangeInput = useCallback((event: { currentTarget: HTMLInputElement }) => {
+    const v = Number(event.currentTarget.value)
+    scrubPlayheadOutputMsRef.current = v
+    playheadRef.current = v
+    setPlayheadMs(v)
+  }, [])
 
   useEffect(() => {
     const previousClip = previousClipRef.current
@@ -289,11 +409,21 @@ function App() {
         trimStartMs: nextTrimStartMs,
         trimEndMs: nextTrimEndMs,
       })
-      captureFeatureUsed(posthog, 'trim')
-      captureEvent(posthog, 'trim_changed', {
-        trim_start_ms: Math.round(nextTrimStartMs),
-        trim_end_ms: Math.round(nextTrimEndMs),
-      })
+      if (trimAnalyticsDebounceRef.current !== null) {
+        window.clearTimeout(trimAnalyticsDebounceRef.current)
+      }
+      trimAnalyticsDebounceRef.current = window.setTimeout(() => {
+        trimAnalyticsDebounceRef.current = null
+        const clip = projectRef.current.clip
+        if (!clip) {
+          return
+        }
+        captureFeatureUsed(posthog, 'trim')
+        captureEvent(posthog, 'trim_changed', {
+          trim_start_ms: Math.round(clip.trimStartMs),
+          trim_end_ms: Math.round(clip.trimEndMs),
+        })
+      }, TRIM_ANALYTICS_DEBOUNCE_MS)
     },
     [posthog, runCommand, trimEndMs, trimStartMs],
   )
@@ -615,9 +745,13 @@ function App() {
       return
     }
 
-    saveDraft(project).catch(() => {
+    const id = window.setTimeout(() => {
+      saveDraft(projectRef.current).catch(() => {
         setStatus('Draft save failed in this session.')
-    })
+      })
+    }, SAVE_DRAFT_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(id)
   }, [project])
 
   useEffect(() => {
@@ -838,14 +972,130 @@ function App() {
   }, [calculateOverlayPosition, dragOverlayPosition, resizeOverlayFontSize, runCommand])
 
   useEffect(() => {
+    if (!timelinePointerActive) {
+      return
+    }
+    const end = () => {
+      scrubLog('timeline: pointer/touch up → flush seek')
+      const p = projectRef.current
+      if (p?.clip) {
+        const maxOut = outputDurationMs(p.clip)
+        const v = clamp(scrubPlayheadOutputMsRef.current, 0, maxOut)
+        playheadRef.current = v
+        setPlayheadMs(v)
+      }
+      setTimelinePointerActive(false)
+      // Defer so any trailing `input` events settle; `scrubPlayheadOutputMsRef` tracks the thumb.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const p2 = projectRef.current
+          if (p2?.clip) {
+            const maxOut = outputDurationMs(p2.clip)
+            const v = clamp(scrubPlayheadOutputMsRef.current, 0, maxOut)
+            playheadRef.current = v
+            setPlayheadMs(v)
+          }
+          void flushPausedVideoSeek()
+        })
+      })
+    }
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+    window.addEventListener('touchend', end)
+    return () => {
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+      window.removeEventListener('touchend', end)
+    }
+  }, [flushPausedVideoSeek, timelinePointerActive])
+
+  useEffect(() => {
+    if (!trimPointerActive) {
+      return
+    }
+    const end = () => setTrimPointerActive(false)
+    window.addEventListener('pointerup', end, true)
+    window.addEventListener('pointercancel', end, true)
+    window.addEventListener('touchend', end, true)
+    return () => {
+      window.removeEventListener('pointerup', end, true)
+      window.removeEventListener('pointercancel', end, true)
+      window.removeEventListener('touchend', end, true)
+    }
+  }, [trimPointerActive])
+
+  useEffect(
+    () => () => {
+      if (trimAnalyticsDebounceRef.current !== null) {
+        window.clearTimeout(trimAnalyticsDebounceRef.current)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
     const video = videoRef.current
     if (!video || isPlaying || project.source?.kind !== 'video' || !project.clip) {
       return
     }
 
-    video.playbackRate = project.clip.playbackRate
-    video.currentTime = getVideoPreviewSourceTimeMs(playheadMs) / 1000
-  }, [getVideoPreviewSourceTimeMs, isPlaying, playheadMs, project])
+    if (timelinePointerActive) {
+      scrubLog('debounced: skip (pointer/touch down on timeline)')
+      return
+    }
+
+    if (trimPointerActive) {
+      scrubLog('debounced: skip (trim handle drag)')
+      return
+    }
+
+    if (wasTimelinePointerActiveRef.current) {
+      scrubLog('debounced: skip (scrub ended; flush already seeked)')
+      wasTimelinePointerActiveRef.current = false
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (cancelled || isPlayingRef.current) {
+          return
+        }
+        const v = videoRef.current
+        const p = projectRef.current
+        if (!v || !p.clip || p.source?.kind !== 'video') {
+          return
+        }
+        const maxOut = p.clip ? outputDurationMs(p.clip) : 0
+        const outputMs = clamp(playheadRef.current, 0, maxOut)
+        const sourceMs = pausedPreviewSourceMs(p, outputMs)
+        v.playbackRate = p.clip.playbackRate
+        const gen = ++pausedPreviewSeekGenerationRef.current
+        scrubLog('debounced: seekVideo start', { playheadMs, outputMs, sourceMs, gen })
+        try {
+          await Promise.race([
+            seekVideo(v, sourceMs),
+            new Promise<never>((_, rej) =>
+              setTimeout(() => rej(new Error('paused seek timeout')), 12_000),
+            ),
+          ])
+          if (cancelled || gen !== pausedPreviewSeekGenerationRef.current) {
+            scrubLog('debounced: stale after seek')
+            return
+          }
+          scrubLog('debounced: seekVideo ok', { currentTime: v.currentTime })
+        } catch (e) {
+          scrubLog('debounced: seek failed', e)
+        }
+      })()
+    }, PAUSED_VIDEO_SYNC_DEBOUNCE_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- timer reset on playhead/timeline/trim; seek uses `playheadRef` + `projectRef` at fire time.
+  }, [isPlaying, playheadMs, timelinePointerActive, trimPointerActive])
 
   useEffect(() => {
     if (!project.source || isBusy || project.source.kind === 'video') {
@@ -872,7 +1122,7 @@ function App() {
         Math.abs((project.source.durationMs ?? project.clip.trimEndMs) - project.clip.trimEndMs) <= 50
 
       video.playbackRate = project.clip.playbackRate
-      video.currentTime = getVideoPreviewSourceTimeMs(playheadRef.current) / 1000
+      video.currentTime = pausedPreviewSourceMs(project, playheadRef.current) / 1000
 
       const handleEnded = () => {
         setPlayheadMs(outputDurationMs(project.clip!))
@@ -941,7 +1191,7 @@ function App() {
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [getVideoPreviewSourceTimeMs, isPlaying, project])
+  }, [isPlaying, project])
 
   const handleImport = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1172,7 +1422,11 @@ function App() {
               <>
                 <video
                   ref={videoRef}
-                  src={project.source.objectUrl}
+                  src={
+                    isWebKit && project.source.videoSrcBlob
+                      ? undefined
+                      : project.source.objectUrl
+                  }
                   playsInline
                   preload="metadata"
                   className="preview-video"
@@ -1365,7 +1619,27 @@ function App() {
                 <span>Start {formatDuration(trimStartMs)}</span>
                 <span>End {formatDuration(trimEndMs)}</span>
         </div>
-              <div className="trim-slider-wrap">
+              <div
+                className="trim-slider-wrap"
+                onPointerDownCapture={() => {
+                  scrubLog('timeline: pointerdown capture')
+                  const p = projectRef.current
+                  if (p?.clip) {
+                    const maxOut = outputDurationMs(p.clip)
+                    scrubPlayheadOutputMsRef.current = clamp(playheadRef.current, 0, maxOut)
+                  }
+                  setTimelinePointerActive(true)
+                }}
+                onTouchStartCapture={() => {
+                  scrubLog('timeline: touchstart capture')
+                  const p = projectRef.current
+                  if (p?.clip) {
+                    const maxOut = outputDurationMs(p.clip)
+                    scrubPlayheadOutputMsRef.current = clamp(playheadRef.current, 0, maxOut)
+                  }
+                  setTimelinePointerActive(true)
+                }}
+              >
                 <div className="trim-track" />
                 <div
                   className="trim-selection"
@@ -1399,13 +1673,18 @@ function App() {
                   ]
                 </div>
                 <input
+                  ref={playheadRangeRef}
                   className="trim-slider trim-slider-playhead"
                   type="range"
                   min={0}
                   max={Math.max(0, maxOutputDurationMs)}
                   step={10}
                   value={Math.min(playheadMs, maxOutputDurationMs)}
-                  onChange={(event) => setPlayheadMs(Number(event.target.value))}
+                  onChange={handlePlayheadRangeInput}
+                  onInput={handlePlayheadRangeInput}
+                  onPointerDown={() => {
+                    wasTimelinePointerActiveRef.current = true
+                  }}
                   disabled={!project.clip}
                   aria-label="Playhead"
                   title="Move playhead"
@@ -1417,6 +1696,7 @@ function App() {
                   max={maxTimelineMs}
                   step={10}
                   value={trimStartMs}
+                  onPointerDown={() => setTrimPointerActive(true)}
                   onChange={(event) => updateTrim({ trimStartMs: Number(event.target.value) })}
                   disabled={!project.clip}
                   aria-label="Trim start"
@@ -1429,6 +1709,7 @@ function App() {
                   max={maxTimelineMs}
                   step={10}
                   value={trimEndMs}
+                  onPointerDown={() => setTrimPointerActive(true)}
                   onChange={(event) => updateTrim({ trimEndMs: Number(event.target.value) })}
                   disabled={!project.clip}
                   aria-label="Trim end"

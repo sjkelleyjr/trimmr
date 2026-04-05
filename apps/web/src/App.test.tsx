@@ -12,6 +12,7 @@ const mediaEngineMocks = vi.hoisted(() => ({
   exportVideoProjectToWebM: vi.fn(),
   downloadBlob: vi.fn(),
   createProjectSummary: vi.fn(),
+  isWebKitExportUserAgent: vi.fn(() => false),
 }))
 
 const renderMocks = vi.hoisted(() => ({
@@ -102,6 +103,11 @@ describe('App', () => {
       expect(screen.getByText(/Exported clip\.mp4.*as WEBM/i)).toBeInTheDocument()
     })
 
-    expect(mediaEngineMocks.saveDraft).toHaveBeenCalled()
+    await waitFor(
+      () => {
+        expect(mediaEngineMocks.saveDraft).toHaveBeenCalled()
+      },
+      { timeout: 3000 },
+    )
   })
 })
