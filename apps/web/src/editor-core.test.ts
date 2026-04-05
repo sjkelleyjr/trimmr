@@ -205,6 +205,34 @@ describe('editor timeline model', () => {
     expect(editorProjectsEqual(a, c)).toBe(false)
   })
 
+  it('editorProjectsEqual is false when overlay lists differ in length or shape', () => {
+    const base = createProject()
+    const extraOverlay = structuredClone(base)
+    extraOverlay.overlays.push({
+      id: 'second',
+      text: 'b',
+      x: 0.5,
+      y: 0.5,
+      fontSize: 12,
+      fontFamily: 'Inter, system-ui, sans-serif',
+      color: '#fff',
+      backgroundOpacity: 0.5,
+    })
+    expect(editorProjectsEqual(base, extraOverlay)).toBe(false)
+
+    const overlaysAsDict = {
+      ...base,
+      overlays: { 0: base.overlays[0] } as unknown as typeof base.overlays,
+    }
+    expect(editorProjectsEqual(base, overlaysAsDict as typeof base)).toBe(false)
+  })
+
+  it('editorProjectsEqual is false when one project has an extra top-level key', () => {
+    const base = createProject()
+    const withExtra = { ...base, __extra: true } as typeof base & { __extra: boolean }
+    expect(editorProjectsEqual(base, withExtra as typeof base)).toBe(false)
+  })
+
   it('returns the original project for no-op trim, playback, position, size, and format updates', () => {
     const project = createProject()
 
