@@ -58,6 +58,7 @@ const SAVE_DRAFT_DEBOUNCE_MS = 650
 
 /** PostHog trim events while dragging — debounce so we do not enqueue hundreds of calls. */
 const TRIM_ANALYTICS_DEBOUNCE_MS = 450
+const SAFARI_BANNER_DISMISSALS_STORAGE_KEY = 'trimmr_safari_banner_dismissals_v1'
 
 /** Map output-timeline ms → source media ms; always pass current `project` (e.g. from `projectRef`) to avoid stale closures. */
 function pausedPreviewSourceMs(project: EditorProject, outputTimeMs: number): number {
@@ -95,6 +96,21 @@ function scrubLog(...args: unknown[]) {
     return
   }
   console.log('[trimmr:scrub]', ...args)
+}
+
+function sourceBannerDismissKey(source: EditorProject['source']): string | null {
+  if (!source) {
+    return null
+  }
+  return [
+    source.kind,
+    source.name,
+    source.mimeType,
+    source.fileSizeBytes,
+    source.durationMs,
+    source.width,
+    source.height,
+  ].join('|')
 }
 
 const FONT_OPTIONS = [
@@ -217,6 +233,23 @@ function App() {
   const [isBusy, setIsBusy] = useState(true)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgressPct, setExportProgressPct] = useState(0)
+  const [dismissedSafariBannerBySourceId, setDismissedSafariBannerBySourceId] = useState<
+    Record<string, true>
+  >(() => {
+    if (typeof window === 'undefined') {
+      return {}
+    }
+    try {
+      const raw = window.localStorage.getItem(SAFARI_BANNER_DISMISSALS_STORAGE_KEY)
+      if (!raw) {
+        return {}
+      }
+      const parsed = JSON.parse(raw) as Record<string, true> | null
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  })
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null)
   const [editingOverlayId, setEditingOverlayId] = useState<string | null>(null)
   const [editingOverlayText, setEditingOverlayText] = useState('')
@@ -275,6 +308,7 @@ function App() {
   const isPlayingRef = useRef(isPlaying)
   isPlayingRef.current = isPlaying
   const sourceId = project.source?.id
+  const sourceDismissKey = sourceBannerDismissKey(project.source)
   const isWebKit = useMemo(
     () => typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent),
     [],
@@ -297,6 +331,14 @@ function App() {
 
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
+  const safariCompatibilityBannerText =
+    isWebKit && project.source?.kind === 'video'
+      ? 'Safari support for some file types and codecs is limited. If this file is not working properly, consider using a Chromium-based browser like Chrome or Brave.'
+      : null
+  const showSafariCompatibilityBanner =
+    Boolean(safariCompatibilityBannerText) &&
+    Boolean(sourceDismissKey) &&
+    (sourceDismissKey ? !dismissedSafariBannerBySourceId[sourceDismissKey] : false)
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
   const maxTimelineMs = project.source?.durationMs ?? 1000
   const maxOutputDurationMs = project.clip ? outputDurationMs(project.clip) : 0
@@ -1944,6 +1986,42 @@ function App() {
               </div>
             </div>
           </div>
+          {showSafariCompatibilityBanner ? (
+            <div className="safari-compat-banner" role="note" aria-live="polite">
+              <span className="safari-compat-banner-text">
+                <span className="safari-compat-banner-icon" aria-hidden="true">
+                  ⚠️
+                </span>
+                <strong>Safari compatibility warning:</strong> {safariCompatibilityBannerText}
+              </span>
+              <button
+                type="button"
+                className="safari-compat-banner-dismiss"
+                onClick={() => {
+                  if (!sourceDismissKey) {
+                    return
+                  }
+                  const next: Record<string, true> = {
+                    ...dismissedSafariBannerBySourceId,
+                    [sourceDismissKey]: true,
+                  }
+                  setDismissedSafariBannerBySourceId(next)
+                  try {
+                    window.localStorage.setItem(
+                      SAFARI_BANNER_DISMISSALS_STORAGE_KEY,
+                      JSON.stringify(next),
+                    )
+                  } catch {
+                    // ignore
+                  }
+                }}
+                aria-label="Dismiss Safari compatibility notice"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
           <div className="preview-settings">
             <RangeField
               label="Playback speed"
