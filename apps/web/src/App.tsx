@@ -232,8 +232,11 @@ function App() {
   const playheadRef = useRef(0)
   /** Last playhead output-ms while dragging; WebKit often leaves `range.value` at 0 on release. */
   const scrubPlayheadOutputMsRef = useRef(0)
+  const timelineClickTargetOutputMsRef = useRef<number | null>(null)
+  const pendingPlayingSeekOutputMsRef = useRef<number | null>(null)
   const playheadRangeRef = useRef<HTMLInputElement | null>(null)
   const pausedPreviewSeekGenerationRef = useRef(0)
+  const timelineScrubActiveRef = useRef(false)
   /** True while playhead range is held; used to skip debounced seek on scrub end (flush already seeks). */
   const wasTimelinePointerActiveRef = useRef(false)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -971,27 +974,60 @@ function App() {
     }
   }, [calculateOverlayPosition, dragOverlayPosition, resizeOverlayFontSize, runCommand])
 
-  useEffect(() => {
-    if (!timelinePointerActive) {
+  const finalizeTimelineScrub = useCallback(() => {
+    if (!timelineScrubActiveRef.current) {
       return
     }
+    timelineScrubActiveRef.current = false
     const end = () => {
       scrubLog('timeline: pointer/touch up → flush seek')
       const p = projectRef.current
+      let committedOutputMs = playheadRef.current
+      let committedSourceMs = 0
       if (p?.clip) {
         const maxOut = outputDurationMs(p.clip)
-        const v = clamp(scrubPlayheadOutputMsRef.current, 0, maxOut)
+        const candidate =
+          timelineClickTargetOutputMsRef.current ?? scrubPlayheadOutputMsRef.current
+        const v = clamp(candidate, 0, maxOut)
+        committedOutputMs = v
+        committedSourceMs = pausedPreviewSourceMs(p, v)
+        scrubLog('timeline: release commit', {
+          committedOutputMs,
+          clickTargetOutputMs: timelineClickTargetOutputMsRef.current,
+          scrubRefOutputMs: scrubPlayheadOutputMsRef.current,
+        })
         playheadRef.current = v
         setPlayheadMs(v)
       }
+
+      if (isPlayingRef.current && p?.source?.kind === 'video' && videoRef.current) {
+        const seekOutputMs = committedOutputMs
+        const seekSourceMs = committedSourceMs
+        timelineClickTargetOutputMsRef.current = null
+        setTimelinePointerActive(false)
+        pendingPlayingSeekOutputMsRef.current = seekOutputMs
+        scrubLog('timeline: seek while playing', {
+          outputMs: seekOutputMs,
+          sourceMs: seekSourceMs,
+        })
+        void seekVideo(videoRef.current, seekSourceMs)
+          .catch((error) => {
+            scrubLog('timeline: seek while playing failed', error)
+          })
+          .finally(() => {
+            pendingPlayingSeekOutputMsRef.current = null
+          })
+        return
+      }
+
+      timelineClickTargetOutputMsRef.current = null
       setTimelinePointerActive(false)
       // Defer so any trailing `input` events settle; `scrubPlayheadOutputMsRef` tracks the thumb.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           const p2 = projectRef.current
           if (p2?.clip) {
-            const maxOut = outputDurationMs(p2.clip)
-            const v = clamp(scrubPlayheadOutputMsRef.current, 0, maxOut)
+            const v = clamp(committedOutputMs, 0, outputDurationMs(p2.clip))
             playheadRef.current = v
             setPlayheadMs(v)
           }
@@ -999,15 +1035,19 @@ function App() {
         })
       })
     }
-    window.addEventListener('pointerup', end)
-    window.addEventListener('pointercancel', end)
-    window.addEventListener('touchend', end)
+    end()
+  }, [flushPausedVideoSeek])
+
+  useEffect(() => {
+    window.addEventListener('pointerup', finalizeTimelineScrub)
+    window.addEventListener('pointercancel', finalizeTimelineScrub)
+    window.addEventListener('touchend', finalizeTimelineScrub)
     return () => {
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-      window.removeEventListener('touchend', end)
+      window.removeEventListener('pointerup', finalizeTimelineScrub)
+      window.removeEventListener('pointercancel', finalizeTimelineScrub)
+      window.removeEventListener('touchend', finalizeTimelineScrub)
     }
-  }, [flushPausedVideoSeek, timelinePointerActive])
+  }, [finalizeTimelineScrub])
 
   useEffect(() => {
     if (!trimPointerActive) {
@@ -1140,7 +1180,19 @@ function App() {
 
         const projectDuration = outputDurationMs(project.clip!)
         const sourceTimeMs = Math.min(video.currentTime * 1000, project.clip!.trimEndMs)
-        setPlayheadMs(mapSourceTimeToOutputTime(project, sourceTimeMs))
+        const mappedOutputMs = mapSourceTimeToOutputTime(project, sourceTimeMs)
+        const pendingOutputMs = pendingPlayingSeekOutputMsRef.current
+        if (pendingOutputMs !== null) {
+          // While seek settles, keep playhead pinned to clicked target to avoid flicker.
+          if (Math.abs(mappedOutputMs - pendingOutputMs) < 120) {
+            pendingPlayingSeekOutputMsRef.current = null
+            setPlayheadMs(mappedOutputMs)
+          } else {
+            setPlayheadMs(pendingOutputMs)
+          }
+        } else {
+          setPlayheadMs(mappedOutputMs)
+        }
 
         if (!trimEndsAtSourceEnd && sourceTimeMs >= project.clip!.trimEndMs) {
           video.currentTime = lastSourceFrameTimeMs(project.clip!) / 1000
@@ -1429,6 +1481,11 @@ function App() {
                   }
                   playsInline
                   preload="metadata"
+                  onClick={() => {
+                    if (project.clip) {
+                      togglePlayback()
+                    }
+                  }}
                   className="preview-video"
                   style={{ aspectRatio: exportAspectRatioCss(project.exportPreset) }}
                 />
@@ -1621,24 +1678,127 @@ function App() {
         </div>
               <div
                 className="trim-slider-wrap"
-                onPointerDownCapture={() => {
+                onPointerDownCapture={(event) => {
                   scrubLog('timeline: pointerdown capture')
                   const p = projectRef.current
                   if (p?.clip) {
                     const maxOut = outputDurationMs(p.clip)
                     scrubPlayheadOutputMsRef.current = clamp(playheadRef.current, 0, maxOut)
+                    const target = event.target as HTMLElement
+                    const isThumbDrag =
+                      target.closest('.trim-slider-start') ||
+                      target.closest('.trim-slider-end') ||
+                      target.closest('.trim-slider-playhead')
+                    if (!isThumbDrag) {
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const ratio = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+                      const sourceMs = ratio * maxTimelineMs
+                      const nextOutputMs = clamp(
+                        mapSourceTimeToOutputTime(p, sourceMs),
+                        0,
+                        outputDurationMs(p.clip),
+                      )
+                      scrubLog('timeline: click map(pointer)', {
+                        ratio,
+                        sourceMs,
+                        nextOutputMs,
+                        trimStartMs: p.clip.trimStartMs,
+                        trimEndMs: p.clip.trimEndMs,
+                      })
+                      timelineClickTargetOutputMsRef.current = nextOutputMs
+                      scrubPlayheadOutputMsRef.current = nextOutputMs
+                      playheadRef.current = nextOutputMs
+                      setPlayheadMs(nextOutputMs)
+                      if (p.source?.kind === 'video') {
+                        if (isPlayingRef.current && videoRef.current) {
+                          const sourceMs = pausedPreviewSourceMs(p, nextOutputMs)
+                          pendingPlayingSeekOutputMsRef.current = nextOutputMs
+                          scrubLog('timeline: direct seek while playing(pointer)', {
+                            outputMs: nextOutputMs,
+                            sourceMs,
+                          })
+                          void seekVideo(videoRef.current, sourceMs)
+                            .catch((error) => {
+                              scrubLog('timeline: direct seek while playing failed(pointer)', error)
+                            })
+                            .finally(() => {
+                              pendingPlayingSeekOutputMsRef.current = null
+                            })
+                        } else {
+                          scrubLog('timeline: direct seek while paused(pointer)', {
+                            outputMs: nextOutputMs,
+                          })
+                          void flushPausedVideoSeek()
+                        }
+                      }
+                      return
+                    }
+                    timelineScrubActiveRef.current = true
                   }
                   setTimelinePointerActive(true)
                 }}
-                onTouchStartCapture={() => {
+                onTouchStartCapture={(event) => {
                   scrubLog('timeline: touchstart capture')
                   const p = projectRef.current
                   if (p?.clip) {
                     const maxOut = outputDurationMs(p.clip)
                     scrubPlayheadOutputMsRef.current = clamp(playheadRef.current, 0, maxOut)
+                    const target = event.target as HTMLElement
+                    const isThumbDrag =
+                      target.closest('.trim-slider-start') ||
+                      target.closest('.trim-slider-end') ||
+                      target.closest('.trim-slider-playhead')
+                    const touch = event.touches[0]
+                    if (!isThumbDrag && touch) {
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const ratio = clamp((touch.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+                      const sourceMs = ratio * maxTimelineMs
+                      const nextOutputMs = clamp(
+                        mapSourceTimeToOutputTime(p, sourceMs),
+                        0,
+                        outputDurationMs(p.clip),
+                      )
+                      scrubLog('timeline: click map(touch)', {
+                        ratio,
+                        sourceMs,
+                        nextOutputMs,
+                        trimStartMs: p.clip.trimStartMs,
+                        trimEndMs: p.clip.trimEndMs,
+                      })
+                      timelineClickTargetOutputMsRef.current = nextOutputMs
+                      scrubPlayheadOutputMsRef.current = nextOutputMs
+                      playheadRef.current = nextOutputMs
+                      setPlayheadMs(nextOutputMs)
+                      if (p.source?.kind === 'video') {
+                        if (isPlayingRef.current && videoRef.current) {
+                          const sourceMs = pausedPreviewSourceMs(p, nextOutputMs)
+                          pendingPlayingSeekOutputMsRef.current = nextOutputMs
+                          scrubLog('timeline: direct seek while playing(touch)', {
+                            outputMs: nextOutputMs,
+                            sourceMs,
+                          })
+                          void seekVideo(videoRef.current, sourceMs)
+                            .catch((error) => {
+                              scrubLog('timeline: direct seek while playing failed(touch)', error)
+                            })
+                            .finally(() => {
+                              pendingPlayingSeekOutputMsRef.current = null
+                            })
+                        } else {
+                          scrubLog('timeline: direct seek while paused(touch)', {
+                            outputMs: nextOutputMs,
+                          })
+                          void flushPausedVideoSeek()
+                        }
+                      }
+                      return
+                    }
+                    timelineScrubActiveRef.current = true
                   }
                   setTimelinePointerActive(true)
                 }}
+                onPointerUpCapture={() => finalizeTimelineScrub()}
+                onTouchEndCapture={() => finalizeTimelineScrub()}
               >
                 <div className="trim-track" />
                 <div
