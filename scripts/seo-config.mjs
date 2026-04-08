@@ -53,6 +53,24 @@ export const SEO_PAGES = [
     workflowGuide: true,
   },
   {
+    relPath: 'apps/web/public/workflows/trim-webm.html',
+    loc: `${SITE_ORIGIN}/workflows/trim-webm.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/cut-mp4-online.html',
+    loc: `${SITE_ORIGIN}/workflows/cut-mp4-online.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/convert-webm-to-mp4.html',
+    loc: `${SITE_ORIGIN}/workflows/convert-webm-to-mp4.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
     relPath: 'apps/web/public/workflows/trimmr-vs-kapwing.html',
     loc: `${SITE_ORIGIN}/workflows/trimmr-vs-kapwing.html`,
     requireAppLink: true,

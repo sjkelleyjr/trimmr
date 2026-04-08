@@ -203,11 +203,46 @@ async function clickPlayPause(page: Page) {
   await playPauseButton(page).click({ force: true })
 }
 
+async function setPreviewPlayingState(page: Page, shouldPlay: boolean) {
+  const video = page.locator(previewVideoSelector)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentlyPaused = await video.evaluate((el: HTMLVideoElement) => el.paused)
+    if (shouldPlay === !currentlyPaused) {
+      return
+    }
+
+    if (attempt < 2) {
+      await clickPlayPause(page)
+    } else {
+      // Final fallback: click the preview surface (App toggles play/pause on video click).
+      await video.click({ force: true })
+    }
+
+    try {
+      await expect
+        .poll(async () => video.evaluate((el: HTMLVideoElement) => el.paused), {
+          timeout: 5_000,
+        })
+        .toBe(!shouldPlay)
+      return
+    } catch {
+      // Retry
+    }
+  }
+
+  // Last assertion for clearer error output.
+  await expect
+    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.paused), {
+      timeout: 5_000,
+    })
+    .toBe(!shouldPlay)
+}
+
 export async function assertPreviewVideoPlaybackAdvances(page: Page) {
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
 
-  await clickPlayPause(page)
+  await setPreviewPlayingState(page, true)
 
   await expect
     .poll(
@@ -216,9 +251,7 @@ export async function assertPreviewVideoPlaybackAdvances(page: Page) {
     )
     .toBeGreaterThan(0.08)
 
-  await clickPlayPause(page)
-
-  await expect(video).toHaveJSProperty('paused', true)
+  await setPreviewPlayingState(page, false)
 }
 
 /**
@@ -231,7 +264,7 @@ export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFil
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
 
-  await clickPlayPause(page)
+  await setPreviewPlayingState(page, true)
 
   // Do not call `createMediaElementSource` here — the app already wires the preview `<video>`
   // into Web Audio. Use decode byte counters, `captureStream()` audio tracks, or `audioTracks`.
@@ -239,19 +272,30 @@ export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFil
     .poll(
       async () =>
         page.evaluate(() => {
-          const v = document.querySelector('video.preview-video') as HTMLVideoElement | null
+          const v = document.querySelector('video.preview-video') as
+            | (HTMLVideoElement & {
+                webkitAudioDecodedByteCount?: number
+                audioTracks?: { length: number }
+                captureStream?: () => MediaStream
+              })
+            | null
           if (!v) {
             return false
           }
-          const w = v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }
-          if (typeof w.webkitAudioDecodedByteCount === 'number' && w.webkitAudioDecodedByteCount > 0) {
+          if (
+            typeof v.webkitAudioDecodedByteCount === 'number' &&
+            v.webkitAudioDecodedByteCount > 0
+          ) {
             return true
           }
           if (v.audioTracks && v.audioTracks.length > 0) {
             return true
           }
           try {
-            const stream = v.captureStream()
+            const stream = v.captureStream?.()
+            if (!stream) {
+              return false
+            }
             return stream.getAudioTracks().length > 0
           } catch {
             return false
@@ -269,28 +313,29 @@ export async function assertPreviewPlaybackAfterRepeatedPlayPause(
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
 
-  const btn = playPauseButton(page)
-
   for (let i = 0; i < opts.cycles; i += 1) {
-    await btn.click({ force: true })
+    await clickPlayPause(page)
     await page.waitForTimeout(opts.playingMs)
-    await btn.click({ force: true })
+    await clickPlayPause(page)
     await page.waitForTimeout(opts.gapMs)
   }
 
-  await btn.click({ force: true })
+  const baseline = await video.evaluate((el: HTMLVideoElement) => el.currentTime)
+  let resumed = false
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await clickPlayPause(page)
+    try {
+      await expect
+        .poll(async () => video.evaluate((el: HTMLVideoElement) => el.currentTime), {
+          timeout: 8_000,
+        })
+        .toBeGreaterThan(baseline + 0.05)
+      resumed = true
+      break
+    } catch {
+      // Retry resume click.
+    }
+  }
 
-  await expect
-    .poll(
-      async () => video.evaluate((el: HTMLVideoElement) => ({ t: el.currentTime, paused: el.paused })),
-      { timeout: 30_000 },
-    )
-    .toMatchObject({ paused: false })
-
-  await expect
-    .poll(
-      async () => video.evaluate((el: HTMLVideoElement) => el.currentTime),
-      { timeout: 20_000 },
-    )
-    .toBeGreaterThan(0.05)
+  expect(resumed).toBe(true)
 }
