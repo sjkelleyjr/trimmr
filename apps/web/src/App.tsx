@@ -339,21 +339,6 @@ function App() {
     [],
   )
 
-  useLayoutEffect(() => {
-    const video = videoRef.current
-    const source = project.source
-    if (!video || source?.kind !== 'video') {
-      return
-    }
-
-    if (isWebKit && source.videoSrcBlob instanceof Blob) {
-      video.srcObject = source.videoSrcBlob
-      video.removeAttribute('src')
-    } else {
-      video.srcObject = null
-    }
-  }, [isWebKit, project.source])
-
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
   const safariSpecificCompatibilityWarning = getSafariSpecificCompatibilityWarning(
@@ -1045,7 +1030,7 @@ function App() {
     }
   }, [calculateOverlayPosition, dragOverlayPosition, resizeOverlayFontSize, runCommand])
 
-  const { seekDuringPlayback: seekVideoDuringPlayback } = useWebKitPlaybackController({
+  const { seekDuringPlayback: seekVideoDuringPlayback, bindVideoSource } = useWebKitPlaybackController({
     isWebKit,
     projectRef,
     videoRef,
@@ -1057,6 +1042,10 @@ function App() {
     setPlayheadMs,
     scrubLog,
   })
+
+  useLayoutEffect(() => {
+    bindVideoSource(project.source)
+  }, [bindVideoSource, project.source])
 
   const finalizeTimelineScrub = useCallback(() => {
     if (!timelineScrubActiveRef.current) {

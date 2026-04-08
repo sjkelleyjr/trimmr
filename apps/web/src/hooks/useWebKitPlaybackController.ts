@@ -95,10 +95,29 @@ export function useWebKitPlaybackController({
 
   const markSourceAttached = useCallback(() => transition('source_attached'), [transition])
   const resetWebKitPlayback = useCallback(() => transition('reset'), [transition])
+  const bindVideoSource = useCallback(
+    (source: EditorProject['source']) => {
+      const video = videoRef.current
+      if (!video || source?.kind !== 'video') {
+        resetWebKitPlayback()
+        return
+      }
+
+      if (isWebKit && source.videoSrcBlob instanceof Blob) {
+        video.srcObject = source.videoSrcBlob
+        video.removeAttribute('src')
+      } else {
+        video.srcObject = null
+      }
+      markSourceAttached()
+    },
+    [isWebKit, markSourceAttached, resetWebKitPlayback, videoRef],
+  )
 
   return {
     webkitPlaybackState,
     seekDuringPlayback,
+    bindVideoSource,
     markSourceAttached,
     resetWebKitPlayback,
   }
