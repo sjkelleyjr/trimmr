@@ -40,6 +40,10 @@ import {
   captureFeatureUsed,
   registerSessionProperties,
 } from './lib/analytics'
+import {
+  getSafariSpecificCompatibilityWarning,
+  SAFARI_COMPATIBILITY_BASE_WARNING,
+} from './lib/safariCompatibility'
 import { buildTrafficSourceProps } from './lib/trafficSource'
 import {
   drawProjectFrame,
@@ -333,9 +337,13 @@ function App() {
 
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
+  const safariSpecificCompatibilityWarning = getSafariSpecificCompatibilityWarning(
+    project.source,
+    isWebKit,
+  )
   const safariCompatibilityBannerText =
-    isWebKit && project.source?.kind === 'video'
-      ? 'Safari support for some file types and codecs is limited. If this file is not working properly, consider using a Chromium-based browser like Chrome or Brave.'
+    isWebKit && project.source
+      ? safariSpecificCompatibilityWarning ?? SAFARI_COMPATIBILITY_BASE_WARNING
       : null
   const showSafariCompatibilityBanner =
     Boolean(safariCompatibilityBannerText) &&

@@ -109,5 +109,30 @@ describe('App', () => {
       },
       { timeout: 3000 },
     )
+  }, 15_000)
+
+  it('shows Safari compatibility banner after importing a GIF on Safari', async () => {
+    mediaEngineMocks.isWebKitExportUserAgent.mockReturnValue(true)
+    mediaEngineMocks.extractSourceMedia.mockResolvedValue(
+      createSourceMedia({
+        name: 'demo.gif',
+        mimeType: 'image/gif',
+        kind: 'animated-image',
+        format: 'gif',
+        audioTrackStatus: 'absent',
+      }),
+    )
+
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]')
+
+    expect(fileInput).not.toBeNull()
+    await user.upload(fileInput! as HTMLInputElement, new File(['gif'], 'demo.gif', { type: 'image/gif' }))
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.extractSourceMedia).toHaveBeenCalled()
+    })
+    expect(screen.getByRole('note')).toBeInTheDocument()
   })
 })
