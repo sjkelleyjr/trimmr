@@ -87,6 +87,13 @@ export default defineConfig({
       },
       testMatch: mobileOnlyGlobs,
     },
+    {
+      name: 'webkit-desktop',
+      use: {
+        ...devices['Desktop Safari'],
+      },
+      testMatch: '**/fixture-matrix.spec.ts',
+    },
   ],
   webServer: {
     command: 'npm run dev -w apps/web -- --host 127.0.0.1 --port 4173',

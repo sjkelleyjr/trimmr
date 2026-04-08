@@ -60,7 +60,10 @@ export function getSafariCompatibilityAssessment(
   const codecs = parseMimeCodecs(source.mimeType)
   const isLikelyWebm =
     source.format === 'webm' || mimeType.startsWith('video/webm') || hasExtension(source.name, '.webm')
-  const hasOpus = codecs.some((codec) => codec.includes('opus'))
+  const hasOpusFromProbe = source.importCodecProbe?.webmCodecIds?.some(
+    (id) => id === 'A_OPUS' || id.toUpperCase().includes('OPUS'),
+  )
+  const hasOpus = codecs.some((codec) => codec.includes('opus')) || Boolean(hasOpusFromProbe)
 
   if (isLikelyWebm && hasOpus) {
     return {

@@ -11,6 +11,12 @@ ffmpeg -y -f lavfi -i color=c=green:s=320x240:d=0.55 -f lavfi -i sine=frequency=
 ffmpeg -y -f lavfi -i color=c=blue:s=320x240:d=0.55 -f lavfi -i sine=frequency=330:sample_rate=44100:duration=0.55 \
   -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$OUT/sample.mp4"
 
+ffmpeg -y -f lavfi -i color=c=purple:s=320x240:r=30 -f lavfi -i sine=frequency=220:sample_rate=48000:duration=0.55 \
+  -c:v libx264 -pix_fmt yuv420p -vsync vfr -c:a aac -shortest "$OUT/sample-vfr.mp4"
+
+ffmpeg -y -f lavfi -i color=c=orange:s=320x240:d=0.55 \
+  -c:v libx264 -pix_fmt yuv420p -an "$OUT/sample-no-audio.mp4"
+
 ffmpeg -y -f lavfi -i color=c=red:s=64x64:d=0.15 -f lavfi -i color=c=yellow:s=64x64:d=0.15 \
   -filter_complex "[0:v][1:v]concat=n=2:v=1,fps=8" -frames:v 16 "$OUT/sample.gif"
 

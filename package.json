@@ -8,7 +8,7 @@
     "typecheck": "npm run typecheck -w apps/web && tsc --noEmit -p packages/shared/tsconfig.json && tsc --noEmit -p packages/editor-core/tsconfig.json && tsc --noEmit -p packages/media-engine/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json",
     "lint": "./node_modules/.bin/eslint --config eslint.config.js apps/web/src apps/web/tests packages playwright.config.ts vitest.config.ts",
     "test": "vitest run --config vitest.config.ts",
-    "test:with-e2e": "npm test && npm run test:e2e:desktop && npm run test:e2e:mobile",
+    "test:with-e2e": "npm test && npm run test:e2e:desktop && playwright test --project=webkit-desktop && npm run test:e2e:mobile",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:e2e": "playwright test",
     "test:e2e:desktop": "playwright test --project=chrome-desktop",

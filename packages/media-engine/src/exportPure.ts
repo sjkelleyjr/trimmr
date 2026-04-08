@@ -53,7 +53,10 @@ export function detectImportFormat(mimeType: string, fileName: string): Supporte
   if (mimeType === 'image/gif') return 'gif'
   if (mimeType === 'image/webp') return 'animated-webp'
   if (mimeType === 'image/apng') return 'apng'
-  if (fileName.toLowerCase().endsWith('.apng')) return 'apng'
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.apng')) return 'apng'
+  if (lower.endsWith('.webm')) return 'webm'
+  if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'mp4'
   return 'unknown'
 }
 

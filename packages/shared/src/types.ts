@@ -11,6 +11,20 @@ export type SupportedImportFormat =
 export type ExportFormat = 'webm' | 'mp4' | 'gif' | 'animated-webp'
 export type AudioTrackStatus = 'present' | 'absent' | 'unknown'
 
+/**
+ * Byte-sniffed hints from the file head (and MP4 tail) at import time.
+ * Used when MIME/filename are missing or wrong (e.g. octet-stream WebM).
+ */
+export interface ImportCodecProbe {
+  sniffedContainer: SupportedImportFormat
+  /** Matroska CodecID strings found in the scan window (e.g. V_VP9, A_OPUS). */
+  webmCodecIds?: readonly string[]
+  /** ISO BMFF `stsd` sample entry types (e.g. avc1, hvc1, mp4a). */
+  mp4SampleEntryTypes?: readonly string[]
+  /** Major brand from `ftyp` (e.g. isom, mp42). */
+  mp4MajorBrand?: string
+}
+
 export interface SourceMedia {
   id: string
   name: string
@@ -27,6 +41,8 @@ export interface SourceMedia {
   frameRate?: number
   /** WebKit: same file as `objectUrl`; assign to `<video>.srcObject` to avoid blob-URL seek churn. */
   videoSrcBlob?: Blob
+  /** Present for imports that ran container/codec sniffing (video path). */
+  importCodecProbe?: ImportCodecProbe
 }
 
 export interface CropRect {

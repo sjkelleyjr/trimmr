@@ -26,6 +26,12 @@ import {
   waitForVideoMetadata,
 } from './exportVideoDom'
 import { loadFfmpeg } from './ffmpegLoader'
+import {
+  probeImportCodecFromFile,
+  refineVideoMimeType,
+  resolveImportFormat,
+  resolveIsVideoImport,
+} from './importCodecProbe'
 import { detectAnimatedImageDurationMs, detectAudioTrackStatus } from './sourceMediaProbe'
 
 export type { ExportTarget } from './exportResolve'
@@ -157,12 +163,25 @@ async function finalizeExport({
 }
 
 export { isWebKitExportUserAgent } from './exportResolve'
+export {
+  isLikelyMp4Container,
+  isLikelyWebmContainer,
+  parseMp4FtypAndStsd,
+  probeImportCodecFromFile,
+  refineVideoMimeType,
+  resolveImportFormat,
+  resolveIsAnimatedImageImport,
+  resolveIsVideoImport,
+  scanWebmCodecIds,
+} from './importCodecProbe'
 
 export async function extractSourceMedia(file: File): Promise<SourceMedia> {
-  const format = detectImportFormat(file.type, file.name)
+  const probe = await probeImportCodecFromFile(file)
+  const format = resolveImportFormat(file.type, file.name, probe)
   const objectUrl = URL.createObjectURL(file)
 
-  if (file.type.startsWith('video/')) {
+  if (resolveIsVideoImport(file.type, file.name, format, probe)) {
+    const videoMime = refineVideoMimeType(file.type || '', format)
     const video = document.createElement('video')
     video.preload = 'metadata'
     video.src = objectUrl
@@ -176,7 +195,7 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
       id: createId('source'),
       name: file.name,
       objectUrl,
-      mimeType: file.type,
+      mimeType: videoMime,
       kind: 'video',
       format,
       width: video.videoWidth,
@@ -186,6 +205,7 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
       estimatedBitrateKbps: estimateBitrateKbps(file.size, Math.round(video.duration * 1000)),
       audioTrackStatus: detectAudioTrackStatus(video),
       videoSrcBlob: file,
+      importCodecProbe: probe,
     }
   }
 
@@ -203,7 +223,7 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
     objectUrl,
     mimeType: file.type || 'application/octet-stream',
     kind: 'animated-image',
-    format,
+    format: detectImportFormat(file.type, file.name),
     width: image.naturalWidth,
     height: image.naturalHeight,
     durationMs: animatedDurationMs,

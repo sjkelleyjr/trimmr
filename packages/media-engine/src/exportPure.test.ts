@@ -103,6 +103,11 @@ describe('detectImportFormat', () => {
     expect(detectImportFormat('application/octet-stream', 'animation.APNG')).toBe('apng')
   })
 
+  it('falls back to webm and mp4 extensions when MIME is generic', () => {
+    expect(detectImportFormat('application/octet-stream', 'clip.webm')).toBe('webm')
+    expect(detectImportFormat('', 'movie.MP4')).toBe('mp4')
+  })
+
   it('returns unknown when unmatched', () => {
     expect(detectImportFormat('', 'foo.bin')).toBe('unknown')
   })

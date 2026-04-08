@@ -41,10 +41,7 @@ import {
   captureFeatureUsed,
   registerSessionProperties,
 } from './lib/analytics'
-import {
-  getSafariSpecificCompatibilityWarning,
-  SAFARI_COMPATIBILITY_BASE_WARNING,
-} from './lib/safariCompatibility'
+import { useSafariCompatibilityBanner } from './hooks/useSafariCompatibilityBanner'
 import { buildTrafficSourceProps } from './lib/trafficSource'
 import {
   drawProjectFrame,
@@ -63,8 +60,6 @@ const SAVE_DRAFT_DEBOUNCE_MS = 650
 
 /** PostHog trim events while dragging — debounce so we do not enqueue hundreds of calls. */
 const TRIM_ANALYTICS_DEBOUNCE_MS = 450
-const SAFARI_BANNER_DISMISSALS_STORAGE_KEY = 'trimmr_safari_banner_dismissals_v1'
-
 /** Map output-timeline ms → source media ms; always pass current `project` (e.g. from `projectRef`) to avoid stale closures. */
 function pausedPreviewSourceMs(project: EditorProject, outputTimeMs: number): number {
   if (!project.clip) {
@@ -101,30 +96,6 @@ function scrubLog(...args: unknown[]) {
     return
   }
   console.log('[trimmr:scrub]', ...args)
-}
-
-function sourceBannerDismissKey(source: EditorProject['source']): string | null {
-  if (!source) {
-    return null
-  }
-  return [
-    source.kind,
-    source.name,
-    source.mimeType,
-    source.fileSizeBytes,
-    source.durationMs,
-    source.width,
-    source.height,
-  ].join('|')
-}
-
-function importBannerDismissKey(input: {
-  kind: 'video' | 'animated-image'
-  name: string
-  mimeType: string
-  fileSizeBytes: number
-}): string {
-  return [input.kind, input.name, input.mimeType, input.fileSizeBytes].join('|')
 }
 
 const FONT_OPTIONS = [
@@ -253,23 +224,6 @@ function App() {
     mimeType: string
     fileSizeBytes: number
   } | null>(null)
-  const [dismissedSafariBannerBySourceId, setDismissedSafariBannerBySourceId] = useState<
-    Record<string, true>
-  >(() => {
-    if (typeof window === 'undefined') {
-      return {}
-    }
-    try {
-      const raw = window.localStorage.getItem(SAFARI_BANNER_DISMISSALS_STORAGE_KEY)
-      if (!raw) {
-        return {}
-      }
-      const parsed = JSON.parse(raw) as Record<string, true> | null
-      return parsed && typeof parsed === 'object' ? parsed : {}
-    } catch {
-      return {}
-    }
-  })
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null)
   const [editingOverlayId, setEditingOverlayId] = useState<string | null>(null)
   const [editingOverlayText, setEditingOverlayText] = useState('')
@@ -329,30 +283,23 @@ function App() {
   const isPlayingRef = useRef(isPlaying)
   isPlayingRef.current = isPlaying
   const sourceId = project.source?.id
-  const sourceDismissKey = project.source
-    ? sourceBannerDismissKey(project.source)
-    : pendingImportBannerSource
-      ? importBannerDismissKey(pendingImportBannerSource)
-      : null
   const isWebKit = useMemo(
     () => typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent),
     [],
   )
 
+  const {
+    safariCompatibilityBannerText,
+    showSafariCompatibilityBanner,
+    dismissSafariBanner,
+  } = useSafariCompatibilityBanner({
+    source: project.source,
+    pendingImport: pendingImportBannerSource,
+    isWebKit,
+  })
+
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
-  const safariSpecificCompatibilityWarning = getSafariSpecificCompatibilityWarning(
-    project.source,
-    isWebKit,
-  )
-  const safariCompatibilityBannerText =
-    isWebKit && (project.source || pendingImportBannerSource)
-      ? safariSpecificCompatibilityWarning ?? SAFARI_COMPATIBILITY_BASE_WARNING
-      : null
-  const showSafariCompatibilityBanner =
-    Boolean(safariCompatibilityBannerText) &&
-    Boolean(sourceDismissKey) &&
-    (sourceDismissKey ? !dismissedSafariBannerBySourceId[sourceDismissKey] : false)
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
   const maxTimelineMs = project.source?.durationMs ?? 1000
   const maxOutputDurationMs = project.clip ? outputDurationMs(project.clip) : 0
@@ -1321,8 +1268,12 @@ function App() {
       })
       setIsBusy(true)
       setStatus(`Importing ${file.name}...`)
+      const looksVideo =
+        file.type.startsWith('video/') ||
+        /\.(webm|mp4|m4v)$/i.test(file.name) ||
+        (file.type === 'application/octet-stream' && /\.(webm|mp4|m4v)$/i.test(file.name))
       setPendingImportBannerSource({
-        kind: file.type.startsWith('video/') ? 'video' : 'animated-image',
+        kind: looksVideo ? 'video' : 'animated-image',
         name: file.name,
         mimeType: file.type || 'application/octet-stream',
         fileSizeBytes: file.size,
@@ -2007,24 +1958,7 @@ function App() {
               <button
                 type="button"
                 className="safari-compat-banner-dismiss"
-                onClick={() => {
-                  if (!sourceDismissKey) {
-                    return
-                  }
-                  const next: Record<string, true> = {
-                    ...dismissedSafariBannerBySourceId,
-                    [sourceDismissKey]: true,
-                  }
-                  setDismissedSafariBannerBySourceId(next)
-                  try {
-                    window.localStorage.setItem(
-                      SAFARI_BANNER_DISMISSALS_STORAGE_KEY,
-                      JSON.stringify(next),
-                    )
-                  } catch {
-                    // ignore
-                  }
-                }}
+                onClick={dismissSafariBanner}
                 aria-label="Dismiss Safari compatibility notice"
                 title="Dismiss"
               >

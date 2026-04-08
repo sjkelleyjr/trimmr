@@ -28,6 +28,13 @@ export const IMPORT_FIXTURES: ImportFixture[] = [
   { file: 'sample.apng', id: 'apng' },
 ]
 
+/** Curated matrix: core fixtures plus edge-case video (VFR, no audio). */
+export const GOLDEN_IMPORT_FIXTURES: ImportFixture[] = [
+  ...IMPORT_FIXTURES,
+  { file: 'sample-vfr.mp4', id: 'vfr-mp4' },
+  { file: 'sample-no-audio.mp4', id: 'no-audio-mp4' },
+]
+
 function expectedExtension(format: E2eExportFormat): string {
   if (format === 'animated-webp') {
     return 'webp'

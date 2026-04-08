@@ -59,6 +59,16 @@ describe('getSafariSpecificCompatibilityWarning', () => {
     )
     expect(unknownCodec.reason).toBe('webm_codec_unknown')
 
+    const opusFromProbe = getSafariCompatibilityAssessment(
+      makeVideoSource({
+        mimeType: 'video/webm',
+        importCodecProbe: { sniffedContainer: 'webm', webmCodecIds: ['A_OPUS'] },
+      }),
+      true,
+      () => 'maybe',
+    )
+    expect(opusFromProbe.reason).toBe('webm_opus_risk')
+
     const generalRisk = getSafariCompatibilityAssessment(
       makeVideoSource({ mimeType: 'video/webm; codecs="vp9"', name: 'clip.webm' }),
       true,

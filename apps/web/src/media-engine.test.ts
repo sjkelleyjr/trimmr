@@ -170,6 +170,41 @@ describe('media engine', () => {
     expect(source.videoSrcBlob).toBe(file)
   })
 
+  it('treats octet-stream WebM as video when EBML magic matches', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:video')
+    const originalCreateElement = document.createElement.bind(document)
+    const createElement = vi.spyOn(document, 'createElement')
+
+    createElement.mockImplementation((tagName: string) => {
+      if (tagName === 'video') {
+        const video = {
+          preload: '',
+          src: '',
+          videoWidth: 1280,
+          videoHeight: 720,
+          duration: 1,
+          onloadedmetadata: null as null | (() => void),
+          onerror: null as null | (() => void),
+        }
+        queueMicrotask(() => video.onloadedmetadata?.())
+        return video as unknown as HTMLVideoElement
+      }
+
+      return originalCreateElement(tagName)
+    })
+
+    const ebml = new Uint8Array(64)
+    ebml.set([0x1a, 0x45, 0xdf, 0xa3])
+    const file = new File([ebml], 'clip.webm', { type: 'application/octet-stream' })
+    const source = await extractSourceMedia(file)
+
+    expect(source.kind).toBe('video')
+    expect(source.format).toBe('webm')
+    expect(source.mimeType).toBe('video/webm')
+    expect(source.importCodecProbe).toBeDefined()
+    // Byte sniffing is covered in `importCodecProbe.test.ts`; jsdom `File` may not round-trip bytes for EBML.
+  })
+
   it('extracts animated-image metadata and falls back to octet-stream mime types', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image')
 
