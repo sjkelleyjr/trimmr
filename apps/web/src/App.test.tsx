@@ -135,4 +135,39 @@ describe('App', () => {
     })
     expect(screen.getByRole('note')).toBeInTheDocument()
   })
+
+  it('shows Safari compatibility banner immediately while GIF metadata is still loading', async () => {
+    mediaEngineMocks.isWebKitExportUserAgent.mockReturnValue(true)
+    let resolveImport: (value: unknown) => void = () => {}
+    mediaEngineMocks.extractSourceMedia.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveImport = resolve
+        }),
+    )
+
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]')
+    expect(fileInput).not.toBeNull()
+
+    await user.upload(fileInput! as HTMLInputElement, new File(['gif'], 'slow.gif', { type: 'image/gif' }))
+
+    expect(screen.getByRole('note')).toBeInTheDocument()
+    expect(screen.getByText(/Safari compatibility warning/i)).toBeInTheDocument()
+
+    resolveImport(
+      createSourceMedia({
+        name: 'slow.gif',
+        mimeType: 'image/gif',
+        kind: 'animated-image',
+        format: 'gif',
+        audioTrackStatus: 'absent',
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.extractSourceMedia).toHaveBeenCalled()
+    })
+  })
 })

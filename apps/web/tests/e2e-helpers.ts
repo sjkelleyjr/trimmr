@@ -321,21 +321,10 @@ export async function assertPreviewPlaybackAfterRepeatedPlayPause(
   }
 
   const baseline = await video.evaluate((el: HTMLVideoElement) => el.currentTime)
-  let resumed = false
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await clickPlayPause(page)
-    try {
-      await expect
-        .poll(async () => video.evaluate((el: HTMLVideoElement) => el.currentTime), {
-          timeout: 8_000,
-        })
-        .toBeGreaterThan(baseline + 0.05)
-      resumed = true
-      break
-    } catch {
-      // Retry resume click.
-    }
-  }
-
-  expect(resumed).toBe(true)
+  await setPreviewPlayingState(page, true)
+  await expect
+    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.currentTime), {
+      timeout: 12_000,
+    })
+    .toBeGreaterThan(baseline + 0.05)
 }

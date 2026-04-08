@@ -32,6 +32,7 @@ import {
 import { Field, Panel, PrimaryButton, RangeField } from '@trimmr/ui'
 import './App.css'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useWebKitPlaybackController } from './hooks/useWebKitPlaybackController'
 import {
   captureEvent,
   captureExportFailed,
@@ -56,7 +57,6 @@ import {
 
 /** Debounced paused preview: overlapping `seekVideo` on one element freezes WebKit. */
 const PAUSED_VIDEO_SYNC_DEBOUNCE_MS = 120
-const PAUSED_VIDEO_SYNC_SUPPRESS_AFTER_PLAYING_SEEK_MS = 700
 
 /** Draft save re-fetches the full source blob — never run on every trim tick. */
 const SAVE_DRAFT_DEBOUNCE_MS = 650
@@ -116,6 +116,15 @@ function sourceBannerDismissKey(source: EditorProject['source']): string | null 
     source.width,
     source.height,
   ].join('|')
+}
+
+function importBannerDismissKey(input: {
+  kind: 'video' | 'animated-image'
+  name: string
+  mimeType: string
+  fileSizeBytes: number
+}): string {
+  return [input.kind, input.name, input.mimeType, input.fileSizeBytes].join('|')
 }
 
 const FONT_OPTIONS = [
@@ -238,6 +247,12 @@ function App() {
   const [isBusy, setIsBusy] = useState(true)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgressPct, setExportProgressPct] = useState(0)
+  const [pendingImportBannerSource, setPendingImportBannerSource] = useState<{
+    kind: 'video' | 'animated-image'
+    name: string
+    mimeType: string
+    fileSizeBytes: number
+  } | null>(null)
   const [dismissedSafariBannerBySourceId, setDismissedSafariBannerBySourceId] = useState<
     Record<string, true>
   >(() => {
@@ -314,7 +329,11 @@ function App() {
   const isPlayingRef = useRef(isPlaying)
   isPlayingRef.current = isPlaying
   const sourceId = project.source?.id
-  const sourceDismissKey = sourceBannerDismissKey(project.source)
+  const sourceDismissKey = project.source
+    ? sourceBannerDismissKey(project.source)
+    : pendingImportBannerSource
+      ? importBannerDismissKey(pendingImportBannerSource)
+      : null
   const isWebKit = useMemo(
     () => typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent),
     [],
@@ -342,7 +361,7 @@ function App() {
     isWebKit,
   )
   const safariCompatibilityBannerText =
-    isWebKit && project.source
+    isWebKit && (project.source || pendingImportBannerSource)
       ? safariSpecificCompatibilityWarning ?? SAFARI_COMPATIBILITY_BASE_WARNING
       : null
   const showSafariCompatibilityBanner =
@@ -1026,46 +1045,18 @@ function App() {
     }
   }, [calculateOverlayPosition, dragOverlayPosition, resizeOverlayFontSize, runCommand])
 
-  const seekVideoDuringPlayback = useCallback(
-    async (outputMs: number, reason: string) => {
-      const p = projectRef.current
-      const video = videoRef.current
-      if (!p?.clip || p.source?.kind !== 'video' || !video) {
-        return
-      }
-      const seekOutputMs = clamp(outputMs, 0, outputDurationMs(p.clip))
-      const seekSourceMs = pausedPreviewSourceMs(p, seekOutputMs)
-      const shouldResume =
-        isPlayingRef.current || (!video.paused && typeof video.paused === 'boolean')
-      pendingPlayingSeekOutputMsRef.current = seekOutputMs
-      suppressPausedDebouncedSeekUntilRef.current =
-        Date.now() + PAUSED_VIDEO_SYNC_SUPPRESS_AFTER_PLAYING_SEEK_MS
-      scrubLog(reason, { outputMs: seekOutputMs, sourceMs: seekSourceMs, isWebKit })
-      try {
-        if (isWebKit) {
-          if (!video.paused) {
-            video.pause()
-          }
-          await Promise.race([
-            seekVideo(video, seekSourceMs),
-            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('playing seek timeout')), 6_000)),
-          ])
-          playheadRef.current = seekOutputMs
-          setPlayheadMs(seekOutputMs)
-          if (shouldResume && isPlayingRef.current) {
-            await video.play()
-          }
-        } else {
-          await seekVideo(video, seekSourceMs)
-        }
-      } catch (error) {
-        scrubLog(`${reason} failed`, error)
-      } finally {
-        pendingPlayingSeekOutputMsRef.current = null
-      }
-    },
-    [isWebKit],
-  )
+  const { seekDuringPlayback: seekVideoDuringPlayback } = useWebKitPlaybackController({
+    isWebKit,
+    projectRef,
+    videoRef,
+    isPlayingRef,
+    playheadRef,
+    pendingPlayingSeekOutputMsRef,
+    suppressPausedDebouncedSeekUntilRef,
+    pausedPreviewSourceMs,
+    setPlayheadMs,
+    scrubLog,
+  })
 
   const finalizeTimelineScrub = useCallback(() => {
     if (!timelineScrubActiveRef.current) {
@@ -1341,6 +1332,12 @@ function App() {
       })
       setIsBusy(true)
       setStatus(`Importing ${file.name}...`)
+      setPendingImportBannerSource({
+        kind: file.type.startsWith('video/') ? 'video' : 'animated-image',
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        fileSizeBytes: file.size,
+      })
 
       try {
         const source = await extractSourceMedia(file)
@@ -1359,6 +1356,7 @@ function App() {
         })
         setStatus(error instanceof Error ? error.message : 'Import failed.')
       } finally {
+        setPendingImportBannerSource(null)
         setIsBusy(false)
       }
     },
