@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SourceMedia } from '@trimmr/shared'
 import {
+  getSafariCompatibilityAssessment,
   getSafariSpecificCompatibilityWarning,
   SAFARI_COMPATIBILITY_BASE_WARNING,
 } from './safariCompatibility'
@@ -41,6 +42,29 @@ describe('getSafariSpecificCompatibilityWarning', () => {
       true,
     )
     expect(warning).toContain('WebM')
+  })
+
+  it('returns explicit reason codes for capability checks', () => {
+    const unsupported = getSafariCompatibilityAssessment(
+      makeVideoSource({ mimeType: 'video/webm', name: 'clip.webm' }),
+      true,
+      () => '',
+    )
+    expect(unsupported.reason).toBe('webm_capability_missing')
+
+    const unknownCodec = getSafariCompatibilityAssessment(
+      makeVideoSource({ mimeType: 'video/webm', name: 'clip.webm' }),
+      true,
+      () => 'maybe',
+    )
+    expect(unknownCodec.reason).toBe('webm_codec_unknown')
+
+    const generalRisk = getSafariCompatibilityAssessment(
+      makeVideoSource({ mimeType: 'video/webm; codecs="vp9"', name: 'clip.webm' }),
+      true,
+      () => 'probably',
+    )
+    expect(generalRisk.reason).toBe('webm_general_risk')
   })
 
   it('returns null for non-WebM videos so caller can show generic fallback', () => {

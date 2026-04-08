@@ -106,7 +106,8 @@ describe('media engine', () => {
     expect(fetch).toHaveBeenCalledWith('blob:source-before-refresh')
     expect(URL.createObjectURL).toHaveBeenCalled()
     expect(loaded?.source?.objectUrl).toBe('blob:source-after-refresh')
-    expect(loaded?.source?.videoSrcBlob).toBeInstanceOf(Blob)
+    expect(loaded?.source?.videoSrcBlob).toBeDefined()
+    expect((loaded?.source?.videoSrcBlob as Blob).size).toBeGreaterThan(0)
   })
 
   it('rejects draft operations when indexedDB fails to open', async () => {
