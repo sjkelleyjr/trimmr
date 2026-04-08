@@ -52,6 +52,7 @@ import {
 
 /** Debounced paused preview: overlapping `seekVideo` on one element freezes WebKit. */
 const PAUSED_VIDEO_SYNC_DEBOUNCE_MS = 120
+const PAUSED_VIDEO_SYNC_SUPPRESS_AFTER_PLAYING_SEEK_MS = 700
 
 /** Draft save re-fetches the full source blob — never run on every trim tick. */
 const SAVE_DRAFT_DEBOUNCE_MS = 650
@@ -267,6 +268,7 @@ function App() {
   const scrubPlayheadOutputMsRef = useRef(0)
   const timelineClickTargetOutputMsRef = useRef<number | null>(null)
   const pendingPlayingSeekOutputMsRef = useRef<number | null>(null)
+  const suppressPausedDebouncedSeekUntilRef = useRef(0)
   const playheadRangeRef = useRef<HTMLInputElement | null>(null)
   const pausedPreviewSeekGenerationRef = useRef(0)
   const timelineScrubActiveRef = useRef(false)
@@ -1016,6 +1018,47 @@ function App() {
     }
   }, [calculateOverlayPosition, dragOverlayPosition, resizeOverlayFontSize, runCommand])
 
+  const seekVideoDuringPlayback = useCallback(
+    async (outputMs: number, reason: string) => {
+      const p = projectRef.current
+      const video = videoRef.current
+      if (!p?.clip || p.source?.kind !== 'video' || !video) {
+        return
+      }
+      const seekOutputMs = clamp(outputMs, 0, outputDurationMs(p.clip))
+      const seekSourceMs = pausedPreviewSourceMs(p, seekOutputMs)
+      const shouldResume =
+        isPlayingRef.current || (!video.paused && typeof video.paused === 'boolean')
+      pendingPlayingSeekOutputMsRef.current = seekOutputMs
+      suppressPausedDebouncedSeekUntilRef.current =
+        Date.now() + PAUSED_VIDEO_SYNC_SUPPRESS_AFTER_PLAYING_SEEK_MS
+      scrubLog(reason, { outputMs: seekOutputMs, sourceMs: seekSourceMs, isWebKit })
+      try {
+        if (isWebKit) {
+          if (!video.paused) {
+            video.pause()
+          }
+          await Promise.race([
+            seekVideo(video, seekSourceMs),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('playing seek timeout')), 6_000)),
+          ])
+          playheadRef.current = seekOutputMs
+          setPlayheadMs(seekOutputMs)
+          if (shouldResume && isPlayingRef.current) {
+            await video.play()
+          }
+        } else {
+          await seekVideo(video, seekSourceMs)
+        }
+      } catch (error) {
+        scrubLog(`${reason} failed`, error)
+      } finally {
+        pendingPlayingSeekOutputMsRef.current = null
+      }
+    },
+    [isWebKit],
+  )
+
   const finalizeTimelineScrub = useCallback(() => {
     if (!timelineScrubActiveRef.current) {
       return
@@ -1025,14 +1068,12 @@ function App() {
       scrubLog('timeline: pointer/touch up → flush seek')
       const p = projectRef.current
       let committedOutputMs = playheadRef.current
-      let committedSourceMs = 0
       if (p?.clip) {
         const maxOut = outputDurationMs(p.clip)
         const candidate =
           timelineClickTargetOutputMsRef.current ?? scrubPlayheadOutputMsRef.current
         const v = clamp(candidate, 0, maxOut)
         committedOutputMs = v
-        committedSourceMs = pausedPreviewSourceMs(p, v)
         scrubLog('timeline: release commit', {
           committedOutputMs,
           clickTargetOutputMs: timelineClickTargetOutputMsRef.current,
@@ -1044,21 +1085,9 @@ function App() {
 
       if (isPlayingRef.current && p?.source?.kind === 'video' && videoRef.current) {
         const seekOutputMs = committedOutputMs
-        const seekSourceMs = committedSourceMs
         timelineClickTargetOutputMsRef.current = null
         setTimelinePointerActive(false)
-        pendingPlayingSeekOutputMsRef.current = seekOutputMs
-        scrubLog('timeline: seek while playing', {
-          outputMs: seekOutputMs,
-          sourceMs: seekSourceMs,
-        })
-        void seekVideo(videoRef.current, seekSourceMs)
-          .catch((error) => {
-            scrubLog('timeline: seek while playing failed', error)
-          })
-          .finally(() => {
-            pendingPlayingSeekOutputMsRef.current = null
-          })
+        void seekVideoDuringPlayback(seekOutputMs, 'timeline: seek while playing')
         return
       }
 
@@ -1078,7 +1107,7 @@ function App() {
       })
     }
     end()
-  }, [flushPausedVideoSeek])
+  }, [flushPausedVideoSeek, seekVideoDuringPlayback])
 
   useEffect(() => {
     window.addEventListener('pointerup', finalizeTimelineScrub)
@@ -1134,6 +1163,10 @@ function App() {
     if (wasTimelinePointerActiveRef.current) {
       scrubLog('debounced: skip (scrub ended; flush already seeked)')
       wasTimelinePointerActiveRef.current = false
+      return
+    }
+    if (Date.now() < suppressPausedDebouncedSeekUntilRef.current) {
+      scrubLog('debounced: skip (recent playing seek)')
       return
     }
 
@@ -1753,19 +1786,10 @@ function App() {
                       setPlayheadMs(nextOutputMs)
                       if (p.source?.kind === 'video') {
                         if (isPlayingRef.current && videoRef.current) {
-                          const sourceMs = pausedPreviewSourceMs(p, nextOutputMs)
-                          pendingPlayingSeekOutputMsRef.current = nextOutputMs
-                          scrubLog('timeline: direct seek while playing(pointer)', {
-                            outputMs: nextOutputMs,
-                            sourceMs,
-                          })
-                          void seekVideo(videoRef.current, sourceMs)
-                            .catch((error) => {
-                              scrubLog('timeline: direct seek while playing failed(pointer)', error)
-                            })
-                            .finally(() => {
-                              pendingPlayingSeekOutputMsRef.current = null
-                            })
+                          void seekVideoDuringPlayback(
+                            nextOutputMs,
+                            'timeline: direct seek while playing(pointer)',
+                          )
                         } else {
                           scrubLog('timeline: direct seek while paused(pointer)', {
                             outputMs: nextOutputMs,
@@ -1813,19 +1837,10 @@ function App() {
                       setPlayheadMs(nextOutputMs)
                       if (p.source?.kind === 'video') {
                         if (isPlayingRef.current && videoRef.current) {
-                          const sourceMs = pausedPreviewSourceMs(p, nextOutputMs)
-                          pendingPlayingSeekOutputMsRef.current = nextOutputMs
-                          scrubLog('timeline: direct seek while playing(touch)', {
-                            outputMs: nextOutputMs,
-                            sourceMs,
-                          })
-                          void seekVideo(videoRef.current, sourceMs)
-                            .catch((error) => {
-                              scrubLog('timeline: direct seek while playing failed(touch)', error)
-                            })
-                            .finally(() => {
-                              pendingPlayingSeekOutputMsRef.current = null
-                            })
+                          void seekVideoDuringPlayback(
+                            nextOutputMs,
+                            'timeline: direct seek while playing(touch)',
+                          )
                         } else {
                           scrubLog('timeline: direct seek while paused(touch)', {
                             outputMs: nextOutputMs,
