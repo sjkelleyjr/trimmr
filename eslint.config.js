@@ -23,4 +23,22 @@ export default defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: [
+      'apps/web/src/App.tsx',
+      'apps/web/src/hooks/usePlaybackController.ts',
+      'apps/web/src/hooks/useTimelineSeek.ts',
+      'apps/web/src/hooks/useWebKitPlaybackController.ts',
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./apps/web/tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': ['error', { ignoreVoid: true, ignoreIIFE: true }],
+      '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
+    },
+  },
 ])

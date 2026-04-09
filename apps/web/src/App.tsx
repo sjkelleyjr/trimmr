@@ -709,7 +709,7 @@ function App() {
       return
     }
 
-    const setupAudio = async () => {
+    const setupAudio = () => {
       if (typeof AudioContext === 'undefined') {
         video.volume = Math.min(1, previewGain)
         return
@@ -733,10 +733,12 @@ function App() {
       video.volume = 1
     }
 
-    void setupAudio().catch(() => {
+    try {
+      setupAudio()
+    } catch {
       // If WebAudio graph setup fails for this source/browser, fall back to native volume control.
       video.volume = Math.min(1, previewGain)
-    })
+    }
   }, [hasControllableAudio, previewVolumePct, project.source?.kind])
 
   useEffect(
@@ -751,29 +753,28 @@ function App() {
   )
 
   useEffect(() => {
-    let mounted = true
-
-    loadDraft()
-      .then((draft) => {
-        if (!mounted || !draft) {
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const draft = await loadDraft()
+        if (controller.signal.aborted || !draft) {
           return
         }
 
         setHistory(createHistory(applyCommand(createEmptyProject(), { type: 'hydrate', project: draft })))
-      })
-      .catch(() => {
-        if (mounted) {
+      } catch {
+        if (!controller.signal.aborted) {
           setStatus('No previous draft was restored.')
         }
-      })
-      .finally(() => {
-        if (mounted) {
+      } finally {
+        if (!controller.signal.aborted) {
           setIsBusy(false)
         }
-      })
+      }
+    })()
 
     return () => {
-      mounted = false
+      controller.abort()
     }
   }, [])
 
@@ -782,13 +783,19 @@ function App() {
       return
     }
 
+    let cancelled = false
     const id = window.setTimeout(() => {
-      saveDraft(projectRef.current).catch(() => {
-        setStatus('Draft save failed in this session.')
+      void saveDraft(projectRef.current).catch(() => {
+        if (!cancelled) {
+          setStatus('Draft save failed in this session.')
+        }
       })
     }, SAVE_DRAFT_DEBOUNCE_MS)
 
-    return () => window.clearTimeout(id)
+    return () => {
+      cancelled = true
+      window.clearTimeout(id)
+    }
   }, [project])
 
   useEffect(() => {
