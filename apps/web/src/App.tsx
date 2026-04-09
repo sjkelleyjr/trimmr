@@ -100,6 +100,24 @@ function scrubLog(...args: unknown[]) {
   console.log('[trimmr:scrub]', ...args)
 }
 
+function durationBucket(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return 'unknown'
+  const seconds = durationMs / 1000
+  if (seconds < 5) return '<5s'
+  if (seconds < 30) return '5-30s'
+  if (seconds < 120) return '30-120s'
+  return '>=120s'
+}
+
+function dimensionBucket(width: number, height: number): string {
+  const pixels = Math.max(0, width) * Math.max(0, height)
+  if (pixels <= 0) return 'unknown'
+  if (pixels < 640 * 360) return '<360p'
+  if (pixels < 1280 * 720) return '360p-720p'
+  if (pixels < 1920 * 1080) return '720p-1080p'
+  return '>=1080p'
+}
+
 const FONT_OPTIONS = [
   { label: 'Sans', value: 'Inter, system-ui, sans-serif' },
   { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
@@ -258,6 +276,8 @@ function App() {
     cumulativeDurationsMs: number[]
   } | null>(null)
   const previousClipRef = useRef<(typeof history.present)['clip']>(null)
+  const lastSeekTelemetryAtRef = useRef(0)
+  const exportStartedAtRef = useRef<number | null>(null)
   const draggingOverlayIdRef = useRef<string | null>(null)
   const resizingOverlayRef = useRef<{
     id: string
@@ -288,6 +308,31 @@ function App() {
   const isWebKit = useMemo(
     () => typeof navigator !== 'undefined' && isWebKitExportUserAgent(navigator.userAgent),
     [],
+  )
+  const mediaTelemetryProps = useCallback(
+    (source: EditorProject['source']) => {
+      if (!source) {
+        return {
+          source_kind: 'none',
+          browser_engine: isWebKit ? 'webkit' : 'other',
+        } as const
+      }
+      return {
+        source_kind: source.kind,
+        source_format: source.format,
+        source_duration_bucket: durationBucket(source.durationMs),
+        source_dimension_bucket: dimensionBucket(source.width, source.height),
+        source_audio_track_status: source.audioTrackStatus,
+        source_sniffed_container: source.importCodecProbe?.sniffedContainer ?? 'unknown',
+        source_mp4_brand: source.importCodecProbe?.mp4MajorBrand ?? 'unknown',
+        source_video_sample_entry:
+          source.importCodecProbe?.mp4SampleEntryTypes?.[0] ?? 'unknown',
+        source_webm_codec:
+          source.importCodecProbe?.webmCodecIds?.[0] ?? 'unknown',
+        browser_engine: isWebKit ? 'webkit' : 'other',
+      } as const
+    },
+    [isWebKit],
   )
 
   const {
@@ -1086,6 +1131,52 @@ function App() {
     })
   }, [isBusy, playheadMs, project, renderAt])
 
+  useEffect(() => {
+    const video = videoRef.current
+    const source = project.source
+    if (!video || source?.kind !== 'video') {
+      return
+    }
+    const base = mediaTelemetryProps(source)
+    const emit = (eventName: string, extras?: Record<string, string | number | boolean | null>) => {
+      captureEvent(posthog, eventName, { ...base, ...extras })
+    }
+
+    const onPlay = () => emit('media_play', { current_time_ms: Math.round(video.currentTime * 1000) })
+    const onPause = () => emit('media_pause', { current_time_ms: Math.round(video.currentTime * 1000) })
+    const onWaiting = () => emit('media_waiting', { current_time_ms: Math.round(video.currentTime * 1000) })
+    const onStalled = () => emit('media_stalled', { current_time_ms: Math.round(video.currentTime * 1000) })
+    const onError = () =>
+      emit('media_error', {
+        current_time_ms: Math.round(video.currentTime * 1000),
+        media_error_code: video.error?.code ?? 0,
+      })
+    const onSeeked = () => {
+      const now = Date.now()
+      if (now - lastSeekTelemetryAtRef.current < 500) {
+        return
+      }
+      lastSeekTelemetryAtRef.current = now
+      emit('media_seek', { current_time_ms: Math.round(video.currentTime * 1000) })
+    }
+
+    video.addEventListener('play', onPlay)
+    video.addEventListener('pause', onPause)
+    video.addEventListener('waiting', onWaiting)
+    video.addEventListener('stalled', onStalled)
+    video.addEventListener('error', onError)
+    video.addEventListener('seeked', onSeeked)
+
+    return () => {
+      video.removeEventListener('play', onPlay)
+      video.removeEventListener('pause', onPause)
+      video.removeEventListener('waiting', onWaiting)
+      video.removeEventListener('stalled', onStalled)
+      video.removeEventListener('error', onError)
+      video.removeEventListener('seeked', onSeeked)
+    }
+  }, [mediaTelemetryProps, posthog, project.source])
+
   const handleImport = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0]
@@ -1143,7 +1234,12 @@ function App() {
     setExportProgressPct(0)
     setIsPlaying(false)
     setStatus(`Exporting ${project.source.name} as ${project.exportPreset.format.toUpperCase()}...`)
+    exportStartedAtRef.current = performance.now()
     captureExportStarted(posthog, project.exportPreset.format, project.source.format)
+    captureEvent(posthog, 'media_export_started', {
+      ...mediaTelemetryProps(project.source),
+      requested_format: project.exportPreset.format,
+    })
 
     try {
       const preset = project.exportPreset
@@ -1242,6 +1338,16 @@ function App() {
         project.source.format,
         summary.durationMs,
       )
+      captureEvent(posthog, 'media_export_completed', {
+        ...mediaTelemetryProps(project.source),
+        requested_format: result.requestedFormat,
+        output_format: result.outputFormat,
+        used_fallback_format: result.outputFormat !== result.requestedFormat,
+        elapsed_ms:
+          exportStartedAtRef.current === null
+            ? -1
+            : Math.round(performance.now() - exportStartedAtRef.current),
+      })
     } catch (error) {
       captureExportFailed(
         posthog,
@@ -1249,12 +1355,22 @@ function App() {
         project.source.format,
         error instanceof Error ? error.message : 'unknown',
       )
+      captureEvent(posthog, 'media_export_failed', {
+        ...mediaTelemetryProps(project.source),
+        requested_format: project.exportPreset.format,
+        reason: error instanceof Error ? error.message : 'unknown',
+        elapsed_ms:
+          exportStartedAtRef.current === null
+            ? -1
+            : Math.round(performance.now() - exportStartedAtRef.current),
+      })
       setStatus(error instanceof Error ? error.message : 'Export failed.')
     } finally {
+      exportStartedAtRef.current = null
       setExportProgressPct(0)
       setIsExporting(false)
     }
-  }, [hasControllableAudio, posthog, previewVolumePct, project])
+  }, [hasControllableAudio, mediaTelemetryProps, posthog, previewVolumePct, project])
 
   const updatePlaybackRate = useCallback(
     (rate: number) => {
