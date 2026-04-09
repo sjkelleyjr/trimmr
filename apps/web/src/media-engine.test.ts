@@ -66,6 +66,40 @@ function installIndexedDbMock() {
   return { db }
 }
 
+/** `extractSourceMedia` probes video via `srcObject = file`; fake that assignment path in jsdom. */
+function mockExtractVideoElement(
+  mode: 'metadata' | 'error',
+  dims?: { w: number; h: number; dur: number },
+) {
+  const video = {
+    preload: '',
+    src: '',
+    muted: false,
+    playsInline: false,
+    videoWidth: dims?.w ?? 1920,
+    videoHeight: dims?.h ?? 1080,
+    duration: dims?.dur ?? 2.4,
+    onloadedmetadata: null as null | (() => void),
+    onerror: null as null | (() => void),
+  }
+  Object.defineProperty(video, 'srcObject', {
+    configurable: true,
+    set() {
+      queueMicrotask(() => {
+        if (mode === 'error') {
+          video.onerror?.()
+        } else {
+          video.onloadedmetadata?.()
+        }
+      })
+    },
+    get() {
+      return null
+    },
+  })
+  return video
+}
+
 describe('media engine', () => {
   it('saves and loads drafts through indexedDB', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
@@ -135,17 +169,7 @@ describe('media engine', () => {
 
     createElement.mockImplementation((tagName: string) => {
       if (tagName === 'video') {
-        const video = {
-          preload: '',
-          src: '',
-          videoWidth: 1920,
-          videoHeight: 1080,
-          duration: 2.4,
-          onloadedmetadata: null as null | (() => void),
-          onerror: null as null | (() => void),
-        }
-        queueMicrotask(() => video.onloadedmetadata?.())
-        return video as unknown as HTMLVideoElement
+        return mockExtractVideoElement('metadata') as unknown as HTMLVideoElement
       }
 
       return originalCreateElement(tagName)
@@ -177,17 +201,7 @@ describe('media engine', () => {
 
     createElement.mockImplementation((tagName: string) => {
       if (tagName === 'video') {
-        const video = {
-          preload: '',
-          src: '',
-          videoWidth: 1280,
-          videoHeight: 720,
-          duration: 1,
-          onloadedmetadata: null as null | (() => void),
-          onerror: null as null | (() => void),
-        }
-        queueMicrotask(() => video.onloadedmetadata?.())
-        return video as unknown as HTMLVideoElement
+        return mockExtractVideoElement('metadata', { w: 1280, h: 720, dur: 1 }) as unknown as HTMLVideoElement
       }
 
       return originalCreateElement(tagName)
@@ -306,14 +320,7 @@ describe('media engine', () => {
     const originalCreateElement = document.createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
       if (tagName === 'video') {
-        const video = {
-          preload: '',
-          src: '',
-          onloadedmetadata: null as null | (() => void),
-          onerror: null as null | (() => void),
-        }
-        queueMicrotask(() => video.onerror?.())
-        return video as unknown as HTMLVideoElement
+        return mockExtractVideoElement('error') as unknown as HTMLVideoElement
       }
 
       return originalCreateElement(tagName)

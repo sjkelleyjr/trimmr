@@ -160,6 +160,195 @@ export function parseMp4FtypAndStsd(buf: Uint8Array): {
   return { majorBrand: state.majorBrand, sampleEntryTypes }
 }
 
+function readBoxBounds(
+  buf: Uint8Array,
+  offset: number,
+  end: number,
+): { type: string; contentStart: number; boxEnd: number } | null {
+  if (offset + 8 > end) {
+    return null
+  }
+  let size = readU32(buf, offset)
+  const type = readFourcc(buf, offset + 4)
+  let header = 8
+  if (size === 1) {
+    if (offset + 16 > end) {
+      return null
+    }
+    const hi = readU32(buf, offset + 8)
+    const lo = readU32(buf, offset + 12)
+    size = hi * 0x1_0000_0000 + lo
+    header = 16
+  }
+  if (size === 0) {
+    size = end - offset
+  }
+  if (size < header || offset + size > end) {
+    return null
+  }
+  return { type, contentStart: offset + header, boxEnd: offset + size }
+}
+
+function readTkhdDisplayDimensions(
+  buf: Uint8Array,
+  boxStart: number,
+  boxEnd: number,
+): { width: number; height: number } | null {
+  if (boxEnd - boxStart < 12) {
+    return null
+  }
+  const version = buf[boxStart + 8] ?? 0
+  const payloadStart = boxStart + 12
+  if (version === 0) {
+    if (boxEnd - payloadStart < 80) {
+      return null
+    }
+    const wFixed = readU32(buf, payloadStart + 72)
+    const hFixed = readU32(buf, payloadStart + 76)
+    return { width: wFixed >>> 16, height: hFixed >>> 16 }
+  }
+  if (version === 1) {
+    if (boxEnd - payloadStart < 92) {
+      return null
+    }
+    const wFixed = readU32(buf, payloadStart + 84)
+    const hFixed = readU32(buf, payloadStart + 88)
+    return { width: wFixed >>> 16, height: hFixed >>> 16 }
+  }
+  return null
+}
+
+function readMdhdTimescaleAndDuration(
+  buf: Uint8Array,
+  boxStart: number,
+  boxEnd: number,
+): { timescale: number; duration: number } | null {
+  if (boxEnd - boxStart < 12) {
+    return null
+  }
+  const version = buf[boxStart + 8] ?? 0
+  const payloadStart = boxStart + 12
+  if (version === 0) {
+    if (boxEnd - payloadStart < 16) {
+      return null
+    }
+    const timescale = readU32(buf, payloadStart + 8)
+    const duration = readU32(buf, payloadStart + 12)
+    return { timescale, duration }
+  }
+  if (version === 1) {
+    if (boxEnd - payloadStart < 28) {
+      return null
+    }
+    const timescale = readU32(buf, payloadStart + 16)
+    const durationHi = readU32(buf, payloadStart + 20)
+    const durationLo = readU32(buf, payloadStart + 24)
+    const duration = durationHi * 0x1_0000_0000 + durationLo
+    return { timescale, duration }
+  }
+  return null
+}
+
+function readHdlrHandlerType(buf: Uint8Array, boxStart: number, boxEnd: number): string | null {
+  // FullBox + HandlerBox: handler_type at offset 16 from box start.
+  if (boxEnd - boxStart < 20) {
+    return null
+  }
+  return readFourcc(buf, boxStart + 16)
+}
+
+function parseVideoMdia(
+  buf: Uint8Array,
+  mdiaStart: number,
+  mdiaEnd: number,
+): { timescale: number; duration: number } | null {
+  let mdhd: { timescale: number; duration: number } | null = null
+  let handlerType: string | null = null
+  let o = mdiaStart + 8
+  while (o + 8 <= mdiaEnd) {
+    const box = readBoxBounds(buf, o, mdiaEnd)
+    if (!box) {
+      break
+    }
+    if (box.type === 'mdhd') {
+      mdhd = readMdhdTimescaleAndDuration(buf, o, box.boxEnd)
+    } else if (box.type === 'hdlr') {
+      handlerType = readHdlrHandlerType(buf, o, box.boxEnd)
+    }
+    o = box.boxEnd
+  }
+  if (handlerType !== 'vide' || !mdhd || mdhd.timescale === 0) {
+    return null
+  }
+  return mdhd
+}
+
+/**
+ * Reads display size (tkhd) and media duration (mdhd) for the first video track.
+ * Used when the browser cannot decode the file (e.g. AV1-in-MP4 on WebKit) but container metadata is valid.
+ */
+export function extractMp4VideoPresentationMetadata(
+  buf: Uint8Array,
+): { width: number; height: number; durationMs: number } | null {
+  let o = 0
+  const end = buf.length
+  while (o + 8 <= end) {
+    const box = readBoxBounds(buf, o, end)
+    if (!box) {
+      break
+    }
+    if (box.type === 'moov') {
+      let inner = box.contentStart
+      while (inner + 8 <= box.boxEnd) {
+        const trakBox = readBoxBounds(buf, inner, box.boxEnd)
+        if (!trakBox) {
+          break
+        }
+        if (trakBox.type === 'trak') {
+          let tkhdDims: { width: number; height: number } | null = null
+          let videoTiming: { timescale: number; duration: number } | null = null
+          let p = trakBox.contentStart
+          while (p + 8 <= trakBox.boxEnd) {
+            const child = readBoxBounds(buf, p, trakBox.boxEnd)
+            if (!child) {
+              break
+            }
+            if (child.type === 'tkhd') {
+              tkhdDims = readTkhdDisplayDimensions(buf, p, child.boxEnd)
+            } else if (child.type === 'mdia') {
+              const vt = parseVideoMdia(buf, p, child.boxEnd)
+              if (vt) {
+                videoTiming = vt
+              }
+            }
+            p = child.boxEnd
+          }
+          if (
+            tkhdDims &&
+            videoTiming &&
+            tkhdDims.width > 0 &&
+            tkhdDims.height > 0
+          ) {
+            const durationMs =
+              videoTiming.duration > 0
+                ? Math.round((videoTiming.duration / videoTiming.timescale) * 1000)
+                : 0
+            return {
+              width: tkhdDims.width,
+              height: tkhdDims.height,
+              durationMs: Math.max(0, durationMs),
+            }
+          }
+        }
+        inner = trakBox.boxEnd
+      }
+      return null
+    }
+    o = box.boxEnd
+  }
+  return null
+}
+
 async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
   if (typeof blob.arrayBuffer === 'function') {
     return new Uint8Array(await blob.arrayBuffer())
@@ -180,6 +369,11 @@ async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
     })
   }
   throw new Error('Unable to read file bytes for codec probe')
+}
+
+export async function readFileBytesForCodecProbe(file: File): Promise<Uint8Array> {
+  const { mp4Parse } = await readBytesForProbe(file)
+  return mp4Parse
 }
 
 async function readBytesForProbe(file: File): Promise<{ head: Uint8Array; mp4Parse: Uint8Array }> {

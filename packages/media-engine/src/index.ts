@@ -27,7 +27,9 @@ import {
 } from './exportVideoDom'
 import { loadFfmpeg } from './ffmpegLoader'
 import {
+  extractMp4VideoPresentationMetadata,
   probeImportCodecFromFile,
+  readFileBytesForCodecProbe,
   refineVideoMimeType,
   resolveImportFormat,
   resolveIsVideoImport,
@@ -166,8 +168,10 @@ export { isWebKitExportUserAgent } from './exportResolve'
 export {
   isLikelyMp4Container,
   isLikelyWebmContainer,
+  extractMp4VideoPresentationMetadata,
   parseMp4FtypAndStsd,
   probeImportCodecFromFile,
+  readFileBytesForCodecProbe,
   refineVideoMimeType,
   resolveImportFormat,
   resolveIsAnimatedImageImport,
@@ -184,12 +188,42 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
     const videoMime = refineVideoMimeType(file.type || '', format)
     const video = document.createElement('video')
     video.preload = 'metadata'
-    video.src = objectUrl
+    video.muted = true
+    video.playsInline = true
+    // Bind the original File so codec sniffing matches playback (especially WebKit + AV1-in-MP4,
+    // which often never reaches loadedmetadata with a blob: URL on a throwaway element).
+    video.srcObject = file
 
-    await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve()
-      video.onerror = () => reject(new Error('Unable to load video metadata'))
-    })
+    let width: number
+    let height: number
+    let rawDurationMs: number
+    let audioTrackStatus: SourceMedia['audioTrackStatus']
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve()
+        video.onerror = () => reject(new Error('Unable to load video metadata'))
+      })
+      width = video.videoWidth
+      height = video.videoHeight
+      rawDurationMs = Math.round(video.duration * 1000)
+      audioTrackStatus = detectAudioTrackStatus(video)
+    } catch {
+      let fallback: ReturnType<typeof extractMp4VideoPresentationMetadata> = null
+      if (format === 'mp4') {
+        const bytes = await readFileBytesForCodecProbe(file)
+        fallback = extractMp4VideoPresentationMetadata(bytes)
+      }
+      if (!fallback) {
+        throw new Error('Unable to load video metadata')
+      }
+      width = fallback.width
+      height = fallback.height
+      rawDurationMs = fallback.durationMs
+      audioTrackStatus = 'unknown'
+    }
+
+    const durationMs = Math.max(1000, rawDurationMs)
 
     return {
       id: createId('source'),
@@ -198,12 +232,12 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
       mimeType: videoMime,
       kind: 'video',
       format,
-      width: video.videoWidth,
-      height: video.videoHeight,
-      durationMs: Math.max(1000, Math.round(video.duration * 1000)),
+      width,
+      height,
+      durationMs,
       fileSizeBytes: file.size,
-      estimatedBitrateKbps: estimateBitrateKbps(file.size, Math.round(video.duration * 1000)),
-      audioTrackStatus: detectAudioTrackStatus(video),
+      estimatedBitrateKbps: estimateBitrateKbps(file.size, durationMs),
+      audioTrackStatus,
       videoSrcBlob: file,
       importCodecProbe: probe,
     }

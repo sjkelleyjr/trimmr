@@ -28,11 +28,27 @@ export const IMPORT_FIXTURES: ImportFixture[] = [
   { file: 'sample.apng', id: 'apng' },
 ]
 
-/** Curated matrix: core fixtures plus edge-case video (VFR, no audio). */
+/**
+ * Curated “problem-shaped” matrix beyond IMPORT_FIXTURES (see `generate-e2e-fixtures.sh`):
+ * - VFR / no-audio H.264 (MP4), VFR VP9 (WebM), VP9 no-audio (WebM)
+ * - VP9 1080p60 + Opus 5.1 (BBB-class), VP8 + Vorbis
+ * - HEVC (hvc1), long-GOP H.264 (seek stress)
+ * - AV1 + Opus (WebM) and AV1 + AAC (MP4, av01) — encoder uses SVT-AV1 or libaom fallback
+ * - AAC 5.1 (MP4)
+ */
 export const GOLDEN_IMPORT_FIXTURES: ImportFixture[] = [
   ...IMPORT_FIXTURES,
   { file: 'sample-vfr.mp4', id: 'vfr-mp4' },
   { file: 'sample-no-audio.mp4', id: 'no-audio-mp4' },
+  { file: 'sample-vp9-1080p60-opus51.webm', id: 'vp9-1080p60-opus51' },
+  { file: 'sample-vp8-vorbis.webm', id: 'vp8-vorbis-webm' },
+  { file: 'sample-hevc.mp4', id: 'hevc-mp4' },
+  { file: 'sample-av1.webm', id: 'av1-webm' },
+  { file: 'sample-av1.mp4', id: 'av1-mp4' },
+  { file: 'sample-aac51.mp4', id: 'aac51-mp4' },
+  { file: 'sample-vfr.webm', id: 'vfr-webm' },
+  { file: 'sample-no-audio.webm', id: 'no-audio-webm' },
+  { file: 'sample-long-gop.mp4', id: 'long-gop-mp4' },
 ]
 
 function expectedExtension(format: E2eExportFormat): string {

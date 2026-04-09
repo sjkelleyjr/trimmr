@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  extractMp4VideoPresentationMetadata,
   isLikelyMp4Container,
   isLikelyWebmContainer,
   parseMp4FtypAndStsd,
@@ -8,6 +11,9 @@ import {
   resolveIsVideoImport,
   scanWebmCodecIds,
 } from './importCodecProbe'
+
+/** Vitest runs from repo root; fixture path must stay stable across workspaces. */
+const repoRoot = process.cwd()
 
 describe('importCodecProbe', () => {
   it('detects WebM EBML magic', () => {
@@ -72,6 +78,13 @@ describe('importCodecProbe', () => {
     const { majorBrand, sampleEntryTypes } = parseMp4FtypAndStsd(buf)
     expect(majorBrand).toBe('isom')
     expect(sampleEntryTypes).toContain('avc1')
+  })
+
+  it('extractMp4VideoPresentationMetadata reads tkhd/mdhd from golden AV1 MP4', () => {
+    const fixturePath = path.join(repoRoot, 'apps/web/tests/fixtures/sample-av1.mp4')
+    const buf = readFileSync(fixturePath)
+    const meta = extractMp4VideoPresentationMetadata(new Uint8Array(buf))
+    expect(meta).toEqual({ width: 320, height: 240, durationMs: 480 })
   })
 
   it('resolveImportFormat prefers sniffed container when MIME is wrong', () => {
