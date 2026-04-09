@@ -32,6 +32,8 @@ import {
 import { Field, Panel, PrimaryButton, RangeField } from '@trimmr/ui'
 import './App.css'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { usePlaybackController } from './hooks/usePlaybackController'
+import { useTimelineSeek } from './hooks/useTimelineSeek'
 import { useWebKitPlaybackController } from './hooks/useWebKitPlaybackController'
 import {
   captureEvent,
@@ -359,24 +361,6 @@ function App() {
   }, [])
 
   useEffect(() => {
-    playheadRef.current = playheadMs
-  }, [playheadMs])
-
-  useEffect(() => {
-    if (timelinePointerActive) {
-      return
-    }
-    scrubPlayheadOutputMsRef.current = playheadMs
-  }, [playheadMs, timelinePointerActive])
-
-  const handlePlayheadRangeInput = useCallback((event: { currentTarget: HTMLInputElement }) => {
-    const v = Number(event.currentTarget.value)
-    scrubPlayheadOutputMsRef.current = v
-    playheadRef.current = v
-    setPlayheadMs(v)
-  }, [])
-
-  useEffect(() => {
     const previousClip = previousClipRef.current
     previousClipRef.current = project.clip
 
@@ -634,21 +618,23 @@ function App() {
     }
   }, [commitOverlayText, editingOverlayId, editingOverlayText])
 
-  const togglePlayback = useCallback(() => {
-    if (!project.clip) {
-      return
-    }
-
-    if (!isPlaying && audioContextRef.current?.state === 'suspended') {
-      void audioContextRef.current.resume().catch(() => {})
-    }
-
-    if (!isPlaying && playheadMs >= maxOutputDurationMs) {
-      setPlayheadMs(0)
-    }
-
-    setIsPlaying((current) => !current)
-  }, [isPlaying, maxOutputDurationMs, playheadMs, project.clip])
+  const { togglePlayback } = usePlaybackController({
+    project,
+    playheadMs,
+    maxOutputDurationMs,
+    isPlaying,
+    setIsPlaying,
+    setPlayheadMs,
+    playheadRef,
+    isPlayingRef,
+    pendingPlayingSeekOutputMsRef,
+    videoRef,
+    audioContextRef,
+    pausedPreviewSourceMs,
+    animationRef,
+    lastFrameRef,
+    setStatus,
+  })
 
   const togglePreviewMute = useCallback(() => {
     if (!hasControllableAudio) {
@@ -990,85 +976,28 @@ function App() {
     scrubLog,
   })
 
+  const { handlePlayheadRangeInput, finalizeTimelineScrub } = useTimelineSeek({
+    playheadMs,
+    timelinePointerActive,
+    trimPointerActive,
+    playheadRef,
+    scrubPlayheadOutputMsRef,
+    timelineScrubActiveRef,
+    timelineClickTargetOutputMsRef,
+    projectRef,
+    isPlayingRef,
+    videoRef,
+    setPlayheadMs,
+    setTimelinePointerActive,
+    setTrimPointerActive,
+    seekVideoDuringPlayback,
+    flushPausedVideoSeek,
+    scrubLog,
+  })
+
   useLayoutEffect(() => {
     bindVideoSource(project.source)
   }, [bindVideoSource, project.source])
-
-  const finalizeTimelineScrub = useCallback(() => {
-    if (!timelineScrubActiveRef.current) {
-      return
-    }
-    timelineScrubActiveRef.current = false
-    const end = () => {
-      scrubLog('timeline: pointer/touch up → flush seek')
-      const p = projectRef.current
-      let committedOutputMs = playheadRef.current
-      if (p?.clip) {
-        const maxOut = outputDurationMs(p.clip)
-        const candidate =
-          timelineClickTargetOutputMsRef.current ?? scrubPlayheadOutputMsRef.current
-        const v = clamp(candidate, 0, maxOut)
-        committedOutputMs = v
-        scrubLog('timeline: release commit', {
-          committedOutputMs,
-          clickTargetOutputMs: timelineClickTargetOutputMsRef.current,
-          scrubRefOutputMs: scrubPlayheadOutputMsRef.current,
-        })
-        playheadRef.current = v
-        setPlayheadMs(v)
-      }
-
-      if (isPlayingRef.current && p?.source?.kind === 'video' && videoRef.current) {
-        const seekOutputMs = committedOutputMs
-        timelineClickTargetOutputMsRef.current = null
-        setTimelinePointerActive(false)
-        void seekVideoDuringPlayback(seekOutputMs, 'timeline: seek while playing')
-        return
-      }
-
-      timelineClickTargetOutputMsRef.current = null
-      setTimelinePointerActive(false)
-      // Defer so any trailing `input` events settle; `scrubPlayheadOutputMsRef` tracks the thumb.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const p2 = projectRef.current
-          if (p2?.clip) {
-            const v = clamp(committedOutputMs, 0, outputDurationMs(p2.clip))
-            playheadRef.current = v
-            setPlayheadMs(v)
-          }
-          void flushPausedVideoSeek()
-        })
-      })
-    }
-    end()
-  }, [flushPausedVideoSeek, seekVideoDuringPlayback])
-
-  useEffect(() => {
-    window.addEventListener('pointerup', finalizeTimelineScrub)
-    window.addEventListener('pointercancel', finalizeTimelineScrub)
-    window.addEventListener('touchend', finalizeTimelineScrub)
-    return () => {
-      window.removeEventListener('pointerup', finalizeTimelineScrub)
-      window.removeEventListener('pointercancel', finalizeTimelineScrub)
-      window.removeEventListener('touchend', finalizeTimelineScrub)
-    }
-  }, [finalizeTimelineScrub])
-
-  useEffect(() => {
-    if (!trimPointerActive) {
-      return
-    }
-    const end = () => setTrimPointerActive(false)
-    window.addEventListener('pointerup', end, true)
-    window.addEventListener('pointercancel', end, true)
-    window.addEventListener('touchend', end, true)
-    return () => {
-      window.removeEventListener('pointerup', end, true)
-      window.removeEventListener('pointercancel', end, true)
-      window.removeEventListener('touchend', end, true)
-    }
-  }, [trimPointerActive])
 
   useEffect(
     () => () => {
@@ -1156,104 +1085,6 @@ function App() {
       setStatus('Preview rendering failed for the current frame.')
     })
   }, [isBusy, playheadMs, project, renderAt])
-
-  useEffect(() => {
-    if (!isPlaying || !project.clip) {
-      lastFrameRef.current = null
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-      return
-    }
-
-    if (project.source?.kind === 'video' && videoRef.current) {
-      const video = videoRef.current
-      const trimEndsAtSourceEnd =
-        Math.abs((project.source.durationMs ?? project.clip.trimEndMs) - project.clip.trimEndMs) <= 50
-
-      video.playbackRate = project.clip.playbackRate
-      video.currentTime = pausedPreviewSourceMs(project, playheadRef.current) / 1000
-
-      const handleEnded = () => {
-        setPlayheadMs(outputDurationMs(project.clip!))
-        setIsPlaying(false)
-      }
-
-      video.addEventListener('ended', handleEnded)
-
-      void video.play().catch(() => {
-        setStatus('Browser blocked autoplay with sound. Press play again or interact with the page.')
-      })
-
-      const step = (timestamp: number) => {
-        lastFrameRef.current = timestamp
-
-        const projectDuration = outputDurationMs(project.clip!)
-        const sourceTimeMs = Math.min(video.currentTime * 1000, project.clip!.trimEndMs)
-        const mappedOutputMs = mapSourceTimeToOutputTime(project, sourceTimeMs)
-        const pendingOutputMs = pendingPlayingSeekOutputMsRef.current
-        if (pendingOutputMs !== null) {
-          // While seek settles, keep playhead pinned to clicked target to avoid flicker.
-          if (Math.abs(mappedOutputMs - pendingOutputMs) < 120) {
-            pendingPlayingSeekOutputMsRef.current = null
-            setPlayheadMs(mappedOutputMs)
-          } else {
-            setPlayheadMs(pendingOutputMs)
-          }
-        } else {
-          setPlayheadMs(mappedOutputMs)
-        }
-
-        if (!trimEndsAtSourceEnd && sourceTimeMs >= project.clip!.trimEndMs) {
-          video.currentTime = lastSourceFrameTimeMs(project.clip!) / 1000
-          video.pause()
-          setIsPlaying(false)
-          setPlayheadMs(projectDuration)
-          return
-        }
-
-        animationRef.current = requestAnimationFrame(step)
-      }
-
-      animationRef.current = requestAnimationFrame(step)
-
-      return () => {
-        video.removeEventListener('ended', handleEnded)
-        video.pause()
-        if (animationRef.current) {
-          cancelAnimationFrame(animationRef.current)
-        }
-      }
-    }
-
-    const step = (timestamp: number) => {
-      const previous = lastFrameRef.current ?? timestamp
-      const delta = timestamp - previous
-      lastFrameRef.current = timestamp
-
-      setPlayheadMs((current) => {
-        const next = current + delta
-        const projectDuration = outputDurationMs(project.clip!)
-        if (next >= projectDuration) {
-          setIsPlaying(false)
-          return projectDuration
-        }
-        return next
-      })
-
-      if (isPlaying) {
-        animationRef.current = requestAnimationFrame(step)
-      }
-    }
-
-    animationRef.current = requestAnimationFrame(step)
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [isPlaying, project])
 
   const handleImport = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {

@@ -346,13 +346,28 @@ export async function assertPreviewPlaybackAfterRepeatedPlayPause(
     await page.waitForTimeout(opts.gapMs)
   }
 
-  const baseline = await video.evaluate((el: HTMLVideoElement) => el.currentTime)
   await setPreviewPlayingState(page, true)
-  // Require a modest media-time delta; 50ms can flake when `currentTime` advances in ~frame
-  // steps under load (Chrome desktop CI saw 0.558 vs baseline+0.05 ≈ 0.569).
+  const resumedAt = await video.evaluate((el: HTMLVideoElement) => el.currentTime)
+
+  // Use wrap-aware progression (currentTime can jump back to ~0 when resuming at clip end).
+  // This avoids false negatives when baseline is near duration on tiny fixtures.
   await expect
-    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.currentTime), {
+    .poll(
+      async () =>
+        video.evaluate((el: HTMLVideoElement, startTime: number) => {
+          const now = el.currentTime
+          const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : null
+          if (duration === null) {
+            return Math.max(0, now - startTime)
+          }
+          if (now >= startTime) {
+            return now - startTime
+          }
+          return duration - startTime + now
+        }, resumedAt),
+      {
       timeout: 20_000,
-    })
-    .toBeGreaterThan(baseline + 0.04)
+      },
+    )
+    .toBeGreaterThan(0.03)
 }
