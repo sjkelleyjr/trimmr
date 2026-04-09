@@ -52,12 +52,11 @@ describe('resolveExportTarget', () => {
     expect(t.recorderMimeType).toBe('video/mp4')
   })
 
-  it('selects m4v when requested and mp4 recorder MIME is supported', () => {
+  it('keeps m4v on webm record path for stability', () => {
     const t = resolveExportTarget('m4v', true, (m) => m === 'video/mp4')
-    expect(t.outputFormat).toBe('m4v')
-    expect(t.outputMimeType).toBe('video/mp4')
-    expect(t.extension).toBe('m4v')
-    expect(t.recorderMimeType).toBe('video/mp4')
+    expect(t.outputFormat).toBe('webm')
+    expect(t.outputMimeType).toBe('video/webm')
+    expect(t.extension).toBe('webm')
   })
 
   it('selects mov when requested and mp4 recorder MIME is supported', () => {

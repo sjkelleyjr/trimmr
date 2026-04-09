@@ -17,6 +17,12 @@ function outputMimeForMp4FamilyFormat(format: ExportFormat): string {
   return format === 'mov' ? 'video/quicktime' : 'video/mp4'
 }
 
+function shouldPreferNativeMp4Recorder(format: ExportFormat): boolean {
+  // Chrome's native MP4 MediaRecorder path can stall on some sources.
+  // Keep m4v on the WebM-record + ffmpeg-transcode path for reliability.
+  return format === 'mp4' || format === 'mov'
+}
+
 interface RecorderTarget {
   outputFormat: ExportFormat
   outputMimeType: string
@@ -50,7 +56,7 @@ export function resolveExportTarget(
     extension: 'webm',
   }
 
-  if (isMp4FamilyFormat(requestedFormat)) {
+  if (isMp4FamilyFormat(requestedFormat) && shouldPreferNativeMp4Recorder(requestedFormat)) {
     const mp4RecorderMimeType = isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2')
       ? 'video/mp4;codecs=avc1.42E01E,mp4a.40.2'
       : isTypeSupported('video/mp4')

@@ -46,3 +46,13 @@ test.describe('Editing controls (video)', () => {
     await exportAndAssertFormat(page, 'webm')
   })
 })
+
+test.describe('M4V reliability', () => {
+  for (const fixture of ['sample-vp9-1080p60-opus51.webm', 'sample-av1.mp4']) {
+    test(`exports m4v without hanging: ${fixture}`, async ({ page }) => {
+      await page.goto('/')
+      await importFixture(page, fixture)
+      await exportAndAssertFormat(page, 'm4v')
+    })
+  }
+})
