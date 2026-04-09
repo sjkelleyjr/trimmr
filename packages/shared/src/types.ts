@@ -8,7 +8,7 @@ export type SupportedImportFormat =
   | 'apng'
   | 'unknown'
 
-export type ExportFormat = 'webm' | 'mp4' | 'gif' | 'animated-webp'
+export type ExportFormat = 'webm' | 'mp4' | 'm4v' | 'gif' | 'animated-webp'
 export type AudioTrackStatus = 'present' | 'absent' | 'unknown'
 
 /**

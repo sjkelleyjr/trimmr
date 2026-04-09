@@ -17,6 +17,7 @@ describe('MIME_TYPE_BY_EXPORT_FORMAT', () => {
   it('covers every export format key', () => {
     expect(MIME_TYPE_BY_EXPORT_FORMAT.webm).toBe('video/webm')
     expect(MIME_TYPE_BY_EXPORT_FORMAT.mp4).toBe('video/mp4')
+    expect(MIME_TYPE_BY_EXPORT_FORMAT.m4v).toBe('video/mp4')
     expect(MIME_TYPE_BY_EXPORT_FORMAT.gif).toBe('image/gif')
     expect(MIME_TYPE_BY_EXPORT_FORMAT['animated-webp']).toBe('image/webp')
   })
@@ -30,6 +31,7 @@ describe('outputExtensionForTranscode', () => {
   it('passes through other formats', () => {
     expect(outputExtensionForTranscode('webm')).toBe('webm')
     expect(outputExtensionForTranscode('mp4')).toBe('mp4')
+    expect(outputExtensionForTranscode('m4v')).toBe('m4v')
     expect(outputExtensionForTranscode('gif')).toBe('gif')
   })
 })
@@ -42,6 +44,16 @@ describe('buildTranscodeArgs', () => {
       '-movflags',
       '+faststart',
       'out.mp4',
+    ])
+  })
+
+  it('m4v uses the same mp4 mux flags', () => {
+    expect(buildTranscodeArgs('m4v', 'in.webm', 'out.m4v', 30)).toEqual([
+      '-i',
+      'in.webm',
+      '-movflags',
+      '+faststart',
+      'out.m4v',
     ])
   })
 

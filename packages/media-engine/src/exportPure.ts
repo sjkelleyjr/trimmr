@@ -5,6 +5,7 @@ import { clamp } from '@trimmr/shared'
 export const MIME_TYPE_BY_EXPORT_FORMAT: Record<ExportFormat, string> = {
   webm: 'video/webm',
   mp4: 'video/mp4',
+  m4v: 'video/mp4',
   gif: 'image/gif',
   'animated-webp': 'image/webp',
 }
@@ -20,7 +21,7 @@ export function buildTranscodeArgs(
   outputFilename: string,
   fps: number,
 ): string[] {
-  if (outputFormat === 'mp4') {
+  if (outputFormat === 'mp4' || outputFormat === 'm4v') {
     return ['-i', inputFilename, '-movflags', '+faststart', outputFilename]
   }
 

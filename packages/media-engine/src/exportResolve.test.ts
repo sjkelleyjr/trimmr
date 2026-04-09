@@ -52,6 +52,14 @@ describe('resolveExportTarget', () => {
     expect(t.recorderMimeType).toBe('video/mp4')
   })
 
+  it('selects m4v when requested and mp4 recorder MIME is supported', () => {
+    const t = resolveExportTarget('m4v', true, (m) => m === 'video/mp4')
+    expect(t.outputFormat).toBe('m4v')
+    expect(t.outputMimeType).toBe('video/mp4')
+    expect(t.extension).toBe('m4v')
+    expect(t.recorderMimeType).toBe('video/mp4')
+  })
+
   it('stays on webm when mp4 is requested but not supported', () => {
     const t = resolveExportTarget('mp4', true, () => false)
     expect(t.outputFormat).toBe('webm')

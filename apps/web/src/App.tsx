@@ -1986,12 +1986,13 @@ function App() {
                     onChange={(event) =>
                       runCommand({
                         type: 'set-export-format',
-                        format: event.target.value as 'webm' | 'mp4' | 'gif' | 'animated-webp',
+                        format: event.target.value as 'webm' | 'mp4' | 'm4v' | 'gif' | 'animated-webp',
                       })
                     }
                   >
                     <option value="webm">WebM</option>
                     <option value="mp4">MP4</option>
+                    <option value="m4v">M4V</option>
                     <option value="gif">GIF</option>
                     <option value="animated-webp">Animated WebP</option>
                   </select>

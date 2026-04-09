@@ -9,6 +9,10 @@ export interface ExportTarget {
   extension: string
 }
 
+function isMp4FamilyFormat(format: ExportFormat): boolean {
+  return format === 'mp4' || format === 'm4v'
+}
+
 interface RecorderTarget {
   outputFormat: ExportFormat
   outputMimeType: string
@@ -42,7 +46,7 @@ export function resolveExportTarget(
     extension: 'webm',
   }
 
-  if (requestedFormat === 'mp4') {
+  if (isMp4FamilyFormat(requestedFormat)) {
     const mp4RecorderMimeType = isTypeSupported('video/mp4;codecs=avc1.42E01E,mp4a.40.2')
       ? 'video/mp4;codecs=avc1.42E01E,mp4a.40.2'
       : isTypeSupported('video/mp4')
@@ -50,10 +54,10 @@ export function resolveExportTarget(
         : null
 
     if (mp4RecorderMimeType) {
-      recorderTarget.outputFormat = 'mp4'
+      recorderTarget.outputFormat = requestedFormat
       recorderTarget.outputMimeType = 'video/mp4'
       recorderTarget.recorderMimeType = mp4RecorderMimeType
-      recorderTarget.extension = 'mp4'
+      recorderTarget.extension = requestedFormat
     }
   }
 
