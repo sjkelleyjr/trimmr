@@ -9,9 +9,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const fixturesDir = path.join(__dirname, 'fixtures')
 
-export type E2eExportFormat = 'webm' | 'mp4' | 'm4v' | 'gif' | 'animated-webp'
+export type E2eExportFormat = 'webm' | 'mp4' | 'm4v' | 'mov' | 'gif' | 'animated-webp'
 
-export const EXPORT_FORMATS: E2eExportFormat[] = ['webm', 'mp4', 'm4v', 'gif', 'animated-webp']
+export const EXPORT_FORMATS: E2eExportFormat[] = ['webm', 'mp4', 'm4v', 'mov', 'gif', 'animated-webp']
 
 export interface ImportFixture {
   /** File name inside `tests/fixtures` */
@@ -142,6 +142,9 @@ export function assertExportMatchesFormat(
       expect(isMp4).toBe(true)
       return
     case 'm4v':
+      expect(isMp4).toBe(true)
+      return
+    case 'mov':
       expect(isMp4).toBe(true)
       return
     case 'gif':

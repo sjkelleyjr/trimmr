@@ -18,6 +18,7 @@ describe('MIME_TYPE_BY_EXPORT_FORMAT', () => {
     expect(MIME_TYPE_BY_EXPORT_FORMAT.webm).toBe('video/webm')
     expect(MIME_TYPE_BY_EXPORT_FORMAT.mp4).toBe('video/mp4')
     expect(MIME_TYPE_BY_EXPORT_FORMAT.m4v).toBe('video/mp4')
+    expect(MIME_TYPE_BY_EXPORT_FORMAT.mov).toBe('video/quicktime')
     expect(MIME_TYPE_BY_EXPORT_FORMAT.gif).toBe('image/gif')
     expect(MIME_TYPE_BY_EXPORT_FORMAT['animated-webp']).toBe('image/webp')
   })
@@ -32,6 +33,7 @@ describe('outputExtensionForTranscode', () => {
     expect(outputExtensionForTranscode('webm')).toBe('webm')
     expect(outputExtensionForTranscode('mp4')).toBe('mp4')
     expect(outputExtensionForTranscode('m4v')).toBe('m4v')
+    expect(outputExtensionForTranscode('mov')).toBe('mov')
     expect(outputExtensionForTranscode('gif')).toBe('gif')
   })
 })
@@ -54,6 +56,16 @@ describe('buildTranscodeArgs', () => {
       '-movflags',
       '+faststart',
       'out.m4v',
+    ])
+  })
+
+  it('mov uses the same mp4-family mux flags', () => {
+    expect(buildTranscodeArgs('mov', 'in.webm', 'out.mov', 30)).toEqual([
+      '-i',
+      'in.webm',
+      '-movflags',
+      '+faststart',
+      'out.mov',
     ])
   })
 

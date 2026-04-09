@@ -6,6 +6,7 @@ export const MIME_TYPE_BY_EXPORT_FORMAT: Record<ExportFormat, string> = {
   webm: 'video/webm',
   mp4: 'video/mp4',
   m4v: 'video/mp4',
+  mov: 'video/quicktime',
   gif: 'image/gif',
   'animated-webp': 'image/webp',
 }
@@ -21,7 +22,7 @@ export function buildTranscodeArgs(
   outputFilename: string,
   fps: number,
 ): string[] {
-  if (outputFormat === 'mp4' || outputFormat === 'm4v') {
+  if (outputFormat === 'mp4' || outputFormat === 'm4v' || outputFormat === 'mov') {
     return ['-i', inputFilename, '-movflags', '+faststart', outputFilename]
   }
 

@@ -10,7 +10,11 @@ export interface ExportTarget {
 }
 
 function isMp4FamilyFormat(format: ExportFormat): boolean {
-  return format === 'mp4' || format === 'm4v'
+  return format === 'mp4' || format === 'm4v' || format === 'mov'
+}
+
+function outputMimeForMp4FamilyFormat(format: ExportFormat): string {
+  return format === 'mov' ? 'video/quicktime' : 'video/mp4'
 }
 
 interface RecorderTarget {
@@ -55,7 +59,7 @@ export function resolveExportTarget(
 
     if (mp4RecorderMimeType) {
       recorderTarget.outputFormat = requestedFormat
-      recorderTarget.outputMimeType = 'video/mp4'
+      recorderTarget.outputMimeType = outputMimeForMp4FamilyFormat(requestedFormat)
       recorderTarget.recorderMimeType = mp4RecorderMimeType
       recorderTarget.extension = requestedFormat
     }
