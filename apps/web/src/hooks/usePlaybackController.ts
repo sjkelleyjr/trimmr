@@ -12,7 +12,6 @@ export function usePlaybackController({
   setIsPlaying,
   setPlayheadMs,
   playheadRef,
-  isPlayingRef,
   pendingPlayingSeekOutputMsRef,
   videoRef,
   audioContextRef,
@@ -28,7 +27,6 @@ export function usePlaybackController({
   setIsPlaying: (value: boolean | ((prev: boolean) => boolean)) => void
   setPlayheadMs: (value: number | ((prev: number) => number)) => void
   playheadRef: MutableRefObject<number>
-  isPlayingRef: MutableRefObject<boolean>
   pendingPlayingSeekOutputMsRef: MutableRefObject<number | null>
   videoRef: MutableRefObject<HTMLVideoElement | null>
   audioContextRef: MutableRefObject<AudioContext | null>

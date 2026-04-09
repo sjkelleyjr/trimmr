@@ -672,7 +672,6 @@ function App() {
     setIsPlaying,
     setPlayheadMs,
     playheadRef,
-    isPlayingRef,
     pendingPlayingSeekOutputMsRef,
     videoRef,
     audioContextRef,

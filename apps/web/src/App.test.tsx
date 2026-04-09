@@ -32,6 +32,7 @@ import App from './App'
 
 describe('App', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     mediaEngineMocks.loadDraft.mockResolvedValue(null)
     mediaEngineMocks.saveDraft.mockResolvedValue(undefined)
     mediaEngineMocks.loadFfmpeg.mockResolvedValue(undefined as never)
@@ -110,6 +111,102 @@ describe('App', () => {
       { timeout: 3000 },
     )
   }, 15_000)
+
+  it('sends video export contract payload to media-engine', async () => {
+    const user = userEvent.setup()
+    const source = createSourceMedia({
+      name: 'movie.mp4',
+      objectUrl: 'blob:movie',
+      kind: 'video',
+      format: 'mp4',
+      durationMs: 5000,
+      audioTrackStatus: 'present',
+    })
+    mediaEngineMocks.extractSourceMedia.mockResolvedValue(source)
+
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]')
+    expect(fileInput).not.toBeNull()
+
+    await user.upload(
+      fileInput! as HTMLInputElement,
+      new File(['video'], 'movie.mp4', { type: 'video/mp4' }),
+    )
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.extractSourceMedia).toHaveBeenCalled()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Export' }))
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.exportVideoProjectToWebM).toHaveBeenCalled()
+    })
+
+    const exportCalls = mediaEngineMocks.exportVideoProjectToWebM.mock.calls
+    const exportArgs = exportCalls[exportCalls.length - 1]?.[0]
+    expect(exportArgs).toMatchObject({
+      sourceUrl: 'blob:movie',
+      trimStartMs: 0,
+      trimEndMs: 5000,
+      playbackRate: 1,
+      exportVolumeGain: 1,
+      preset: {
+        format: 'webm',
+        width: 1080,
+        height: 720,
+        fps: 24,
+      },
+    })
+    expect(typeof exportArgs?.renderFrame).toBe('function')
+    expect(typeof exportArgs?.onProgress).toBe('function')
+  })
+
+  it('routes animated-image export through preview API contract', async () => {
+    const user = userEvent.setup()
+    const source = createSourceMedia({
+      name: 'loop.gif',
+      objectUrl: 'blob:gif',
+      kind: 'animated-image',
+      format: 'gif',
+      durationMs: 2200,
+      audioTrackStatus: 'absent',
+    })
+    mediaEngineMocks.extractSourceMedia.mockResolvedValue(source)
+
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]')
+    expect(fileInput).not.toBeNull()
+
+    await user.upload(
+      fileInput! as HTMLInputElement,
+      new File(['gif'], 'loop.gif', { type: 'image/gif' }),
+    )
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.extractSourceMedia).toHaveBeenCalled()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Export' }))
+
+    await waitFor(() => {
+      expect(mediaEngineMocks.exportPreviewToWebM).toHaveBeenCalled()
+    })
+
+    const exportCalls = mediaEngineMocks.exportPreviewToWebM.mock.calls
+    const exportArgs = exportCalls[exportCalls.length - 1]?.[0]
+    expect(exportArgs).toMatchObject({
+      durationMs: 1000,
+      preset: {
+        format: 'webm',
+        width: 1080,
+        height: 720,
+        fps: 24,
+      },
+    })
+    expect(typeof exportArgs?.drawFrame).toBe('function')
+    expect(typeof exportArgs?.onProgress).toBe('function')
+  })
 
   it('shows Safari compatibility banner after importing a GIF on Safari', async () => {
     mediaEngineMocks.isWebKitExportUserAgent.mockReturnValue(true)
