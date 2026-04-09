@@ -88,4 +88,28 @@ export const SEO_PAGES = [
     requireAppLink: true,
     workflowGuide: true,
   },
+  {
+    relPath: 'apps/web/public/workflows/podcast-stream-to-gif.html',
+    loc: `${SITE_ORIGIN}/workflows/podcast-stream-to-gif.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/product-demo-gif-for-social-docs.html',
+    loc: `${SITE_ORIGIN}/workflows/product-demo-gif-for-social-docs.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/reaction-gif-from-long-video.html',
+    loc: `${SITE_ORIGIN}/workflows/reaction-gif-from-long-video.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
+  {
+    relPath: 'apps/web/public/workflows/before-after-quick-tip-gif-loops.html',
+    loc: `${SITE_ORIGIN}/workflows/before-after-quick-tip-gif-loops.html`,
+    requireAppLink: true,
+    workflowGuide: true,
+  },
 ]
