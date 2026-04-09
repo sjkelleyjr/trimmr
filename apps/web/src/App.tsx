@@ -43,6 +43,7 @@ import {
   captureFeatureUsed,
   registerSessionProperties,
 } from './lib/analytics'
+import { classifyExportError, classifyImportError } from './lib/errorTaxonomy'
 import { useSafariCompatibilityBanner } from './hooks/useSafariCompatibilityBanner'
 import { buildTrafficSourceProps } from './lib/trafficSource'
 import {
@@ -1213,10 +1214,13 @@ function App() {
           source_bytes: source.fileSizeBytes,
         })
       } catch (error) {
+        const classified = classifyImportError(error)
         captureEvent(posthog, 'file_import_failed', {
           reason: error instanceof Error ? error.message : 'unknown',
+          reason_code: classified.code,
+          recovery_strategy: classified.recoveryStrategy,
         })
-        setStatus(error instanceof Error ? error.message : 'Import failed.')
+        setStatus(classified.userMessage)
       } finally {
         setPendingImportBannerSource(null)
         setIsBusy(false)
@@ -1349,22 +1353,25 @@ function App() {
             : Math.round(performance.now() - exportStartedAtRef.current),
       })
     } catch (error) {
+      const classified = classifyExportError(error)
       captureExportFailed(
         posthog,
         project.exportPreset.format,
         project.source.format,
-        error instanceof Error ? error.message : 'unknown',
+        `${classified.code}: ${error instanceof Error ? error.message : 'unknown'}`,
       )
       captureEvent(posthog, 'media_export_failed', {
         ...mediaTelemetryProps(project.source),
         requested_format: project.exportPreset.format,
         reason: error instanceof Error ? error.message : 'unknown',
+        reason_code: classified.code,
+        recovery_strategy: classified.recoveryStrategy,
         elapsed_ms:
           exportStartedAtRef.current === null
             ? -1
             : Math.round(performance.now() - exportStartedAtRef.current),
       })
-      setStatus(error instanceof Error ? error.message : 'Export failed.')
+      setStatus(classified.userMessage)
     } finally {
       exportStartedAtRef.current = null
       setExportProgressPct(0)
