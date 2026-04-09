@@ -312,11 +312,21 @@ function App() {
   )
   const mediaTelemetryProps = useCallback(
     (source: EditorProject['source']) => {
+      const browser_engine = isWebKit ? ('webkit' as const) : ('other' as const)
       if (!source) {
+        // Fixed shape so spreads satisfy captureEvent props (no optional undefined keys).
         return {
-          source_kind: 'none',
-          browser_engine: isWebKit ? 'webkit' : 'other',
-        } as const
+          source_kind: 'none' as const,
+          browser_engine,
+          source_format: 'unknown' as const,
+          source_duration_bucket: 'unknown' as const,
+          source_dimension_bucket: 'unknown' as const,
+          source_audio_track_status: 'unknown' as const,
+          source_sniffed_container: 'unknown' as const,
+          source_mp4_brand: 'unknown' as const,
+          source_video_sample_entry: 'unknown' as const,
+          source_webm_codec: 'unknown' as const,
+        }
       }
       return {
         source_kind: source.kind,
@@ -328,10 +338,9 @@ function App() {
         source_mp4_brand: source.importCodecProbe?.mp4MajorBrand ?? 'unknown',
         source_video_sample_entry:
           source.importCodecProbe?.mp4SampleEntryTypes?.[0] ?? 'unknown',
-        source_webm_codec:
-          source.importCodecProbe?.webmCodecIds?.[0] ?? 'unknown',
-        browser_engine: isWebKit ? 'webkit' : 'other',
-      } as const
+        source_webm_codec: source.importCodecProbe?.webmCodecIds?.[0] ?? 'unknown',
+        browser_engine,
+      }
     },
     [isWebKit],
   )
