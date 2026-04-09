@@ -12,7 +12,7 @@ for (const source of GOLDEN_IMPORT_FIXTURES) {
     await page.goto('/')
     await importFixture(page, source.file)
 
-    const isVideo = /\.(webm|mp4|m4v)$/i.test(source.file)
+    const isVideo = /\.(webm|mp4|m4v|mov)$/i.test(source.file)
 
     if (isVideo) {
       await expect(page.locator('video.preview-video')).toBeVisible({ timeout: 30_000 })

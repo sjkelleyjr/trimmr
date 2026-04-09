@@ -459,7 +459,12 @@ export function resolveIsVideoImport(
     return true
   }
   const lower = fileName.toLowerCase()
-  return lower.endsWith('.webm') || lower.endsWith('.mp4') || lower.endsWith('.m4v')
+  return (
+    lower.endsWith('.webm') ||
+    lower.endsWith('.mp4') ||
+    lower.endsWith('.m4v') ||
+    lower.endsWith('.mov')
+  )
 }
 
 export function resolveIsAnimatedImageImport(

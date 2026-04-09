@@ -35,9 +35,12 @@ export const IMPORT_FIXTURES: ImportFixture[] = [
  * - HEVC (hvc1), long-GOP H.264 (seek stress)
  * - AV1 + Opus (WebM) and AV1 + AAC (MP4, av01) — encoder uses SVT-AV1 or libaom fallback
  * - AAC 5.1 (MP4)
+ * - QuickTime `.mov` remux + `.m4v` extension alias (same bitstream as baseline MP4)
  */
 export const GOLDEN_IMPORT_FIXTURES: ImportFixture[] = [
   ...IMPORT_FIXTURES,
+  { file: 'sample.mov', id: 'mov-quicktime' },
+  { file: 'sample.m4v', id: 'm4v' },
   { file: 'sample-vfr.mp4', id: 'vfr-mp4' },
   { file: 'sample-no-audio.mp4', id: 'no-audio-mp4' },
   { file: 'sample-vp9-1080p60-opus51.webm', id: 'vp9-1080p60-opus51' },

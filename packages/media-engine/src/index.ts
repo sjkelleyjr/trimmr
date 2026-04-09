@@ -190,9 +190,9 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
     video.preload = 'metadata'
     video.muted = true
     video.playsInline = true
-    // Bind the original File so codec sniffing matches playback (especially WebKit + AV1-in-MP4,
-    // which often never reaches loadedmetadata with a blob: URL on a throwaway element).
-    video.srcObject = file
+    // Blob URL works across Chromium/WebKit for decodable files. When the element still errors
+    // (e.g. AV1-in-MP4 on Safari), MP4 container metadata is read below.
+    video.src = objectUrl
 
     let width: number
     let height: number

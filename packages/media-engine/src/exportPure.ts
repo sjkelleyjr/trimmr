@@ -48,7 +48,7 @@ export function estimateBitrateKbps(fileSizeBytes: number, durationMs: number): 
  * Pure import sniffing from MIME + filename (mirrors previous `File`-based `detectFormat`).
  */
 export function detectImportFormat(mimeType: string, fileName: string): SupportedImportFormat {
-  if (mimeType === 'video/mp4') return 'mp4'
+  if (mimeType === 'video/mp4' || mimeType === 'video/quicktime') return 'mp4'
   if (mimeType === 'video/webm') return 'webm'
   if (mimeType === 'image/gif') return 'gif'
   if (mimeType === 'image/webp') return 'animated-webp'
@@ -56,7 +56,7 @@ export function detectImportFormat(mimeType: string, fileName: string): Supporte
   const lower = fileName.toLowerCase()
   if (lower.endsWith('.apng')) return 'apng'
   if (lower.endsWith('.webm')) return 'webm'
-  if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'mp4'
+  if (lower.endsWith('.mp4') || lower.endsWith('.m4v') || lower.endsWith('.mov')) return 'mp4'
   return 'unknown'
 }
 

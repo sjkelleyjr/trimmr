@@ -1470,7 +1470,7 @@ function App() {
             <span>Choose a file</span>
             <input
               type="file"
-              accept="video/mp4,video/webm,image/gif,image/webp,image/apng,.apng"
+              accept="video/mp4,video/quicktime,video/webm,image/gif,image/webp,image/apng,.apng,.mov,.m4v"
               onChange={handleImport}
             />
           </label>

@@ -66,14 +66,13 @@ function installIndexedDbMock() {
   return { db }
 }
 
-/** `extractSourceMedia` probes video via `srcObject = file`; fake that assignment path in jsdom. */
+/** `extractSourceMedia` probes video via `src = objectURL`; fake that assignment path in jsdom. */
 function mockExtractVideoElement(
   mode: 'metadata' | 'error',
   dims?: { w: number; h: number; dur: number },
 ) {
   const video = {
     preload: '',
-    src: '',
     muted: false,
     playsInline: false,
     videoWidth: dims?.w ?? 1920,
@@ -81,10 +80,7 @@ function mockExtractVideoElement(
     duration: dims?.dur ?? 2.4,
     onloadedmetadata: null as null | (() => void),
     onerror: null as null | (() => void),
-  }
-  Object.defineProperty(video, 'srcObject', {
-    configurable: true,
-    set() {
+    set src(_value: string) {
       queueMicrotask(() => {
         if (mode === 'error') {
           video.onerror?.()
@@ -93,10 +89,7 @@ function mockExtractVideoElement(
         }
       })
     },
-    get() {
-      return null
-    },
-  })
+  }
   return video
 }
 

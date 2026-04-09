@@ -21,6 +21,10 @@ ffmpeg -y -f lavfi -i color=c=green:s=320x240:d=0.55 -f lavfi -i sine=frequency=
 ffmpeg -y -f lavfi -i color=c=blue:s=320x240:d=0.55 -f lavfi -i sine=frequency=330:sample_rate=44100:duration=0.55 \
   -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$OUT/sample.mp4"
 
+# Same A/V as sample.mp4; exercises QuickTime container + .m4v extension in pickers and sniffers.
+ffmpeg -y -i "$OUT/sample.mp4" -c copy -f mov "$OUT/sample.mov"
+ffmpeg -y -i "$OUT/sample.mp4" -c copy "$OUT/sample.m4v"
+
 ffmpeg -y -f lavfi -i color=c=purple:s=320x240:r=30 -f lavfi -i sine=frequency=220:sample_rate=48000:duration=0.55 \
   -c:v libx264 -pix_fmt yuv420p -vsync vfr -c:a aac -shortest "$OUT/sample-vfr.mp4"
 

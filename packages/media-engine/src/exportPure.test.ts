@@ -96,6 +96,7 @@ describe('estimateBitrateKbps', () => {
 describe('detectImportFormat', () => {
   it('uses mime first', () => {
     expect(detectImportFormat('video/mp4', 'x.apng')).toBe('mp4')
+    expect(detectImportFormat('video/quicktime', 'x.webm')).toBe('mp4')
   })
 
   it('falls back to apng extension', () => {
@@ -106,6 +107,8 @@ describe('detectImportFormat', () => {
   it('falls back to webm and mp4 extensions when MIME is generic', () => {
     expect(detectImportFormat('application/octet-stream', 'clip.webm')).toBe('webm')
     expect(detectImportFormat('', 'movie.MP4')).toBe('mp4')
+    expect(detectImportFormat('', 'iphone.MOV')).toBe('mp4')
+    expect(detectImportFormat('application/octet-stream', 'tv.m4v')).toBe('mp4')
   })
 
   it('returns unknown when unmatched', () => {

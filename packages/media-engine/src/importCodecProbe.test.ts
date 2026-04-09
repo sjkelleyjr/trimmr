@@ -98,6 +98,11 @@ describe('importCodecProbe', () => {
     expect(resolveIsVideoImport('application/octet-stream', 'bin', 'unknown', probe)).toBe(true)
   })
 
+  it('resolveIsVideoImport treats .mov like MP4 by extension', () => {
+    const probe = { sniffedContainer: 'unknown' as const }
+    expect(resolveIsVideoImport('', 'clip.mov', 'mp4', probe)).toBe(true)
+  })
+
   it('resolveIsAnimatedImageImport is false when bytes say video', () => {
     const probe = { sniffedContainer: 'webm' as const }
     expect(resolveIsAnimatedImageImport('image/gif', 'x.gif', 'webm', probe)).toBe(false)
