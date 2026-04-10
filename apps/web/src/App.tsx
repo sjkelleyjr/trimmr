@@ -426,6 +426,8 @@ function App() {
   const hasControllableAudio =
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
+  const githubIssueUrl =
+    'https://github.com/sjkelleyjr/trimmr/issues/new?template=bug_report.yml&title=bug%3A+'
   const maxTimelineMs = project.source?.durationMs ?? 1000
   const maxOutputDurationMs = project.clip ? outputDurationMs(project.clip) : 0
   const timelineDenominator = Math.max(1, maxTimelineMs)
@@ -2159,6 +2161,9 @@ function App() {
 
       <footer className="app-footer">
         <a href="/workflows/">guides for how to trim, resize, convert to gif, and more</a>
+        <a href={githubIssueUrl} target="_blank" rel="noreferrer">
+          found a bug? open an issue
+        </a>
       </footer>
     </main>
   )

@@ -1,0 +1,102 @@
+name: Bug report
+description: Report a reproducible bug in trimmr.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        Please fill in all required fields so we can reproduce and debug quickly.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+      placeholder: "When I ..., I expected ..., but ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use numbered steps and include the exact source file when possible.
+      placeholder: |
+        1. Open ...
+        2. Import ...
+        3. Click ...
+    validations:
+      required: true
+  - type: dropdown
+    id: source-kind
+    attributes:
+      label: Source kind
+      options:
+        - video
+        - animated-image
+        - unknown
+    validations:
+      required: true
+  - type: input
+    id: source-format
+    attributes:
+      label: Source format
+      description: Example: gif, webm, mp4, apng, animated-webp
+      placeholder: gif
+    validations:
+      required: true
+  - type: input
+    id: source-file
+    attributes:
+      label: Source filename
+      description: Include extension
+      placeholder: sample.gif
+    validations:
+      required: true
+  - type: input
+    id: source-duration
+    attributes:
+      label: Reported source duration (ms)
+      placeholder: "6600"
+    validations:
+      required: true
+  - type: input
+    id: clip-settings
+    attributes:
+      label: Clip settings
+      description: trim start/end + playback rate
+      placeholder: trim 0-6600ms, rate 1.0x
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Safari 18.0 (macOS 15.0)
+    validations:
+      required: true
+  - type: textarea
+    id: user-agent
+    attributes:
+      label: Browser user agent
+      render: shell
+      placeholder: Paste `navigator.userAgent`
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console logs
+      description: Paste any `[trimmr:*]` logs from DevTools.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots / sample media
+      description: Drag-and-drop screenshots, recordings, and a minimal sample file if possible.
+    validations:
+      required: false
