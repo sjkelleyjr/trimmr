@@ -155,7 +155,7 @@ function playwrightExportHookEnabled(): boolean {
 }
 
 async function readExportHookPayload(page: Page): Promise<{ buffer: Buffer; filename: string } | null> {
-  return page.evaluate(async () => {
+  const payload = await page.evaluate(async () => {
     const w = window as Window & {
       __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
     }
@@ -168,6 +168,10 @@ async function readExportHookPayload(page: Page): Promise<{ buffer: Buffer; file
     delete w.__PLAYWRIGHT_LAST_EXPORT
     return { buf: Array.from(new Uint8Array(buf)), filename }
   })
+  if (!payload?.buf) {
+    return null
+  }
+  return { buffer: Buffer.from(payload.buf), filename: payload.filename }
 }
 
 export async function exportAndAssertFormat(page: Page, format: E2eExportFormat) {
@@ -195,32 +199,45 @@ export async function exportAndAssertFormat(page: Page, format: E2eExportFormat)
   await expect(exportButton).toBeEnabled({ timeout: exportWaitMs })
 
   if (preferExportHook) {
-    // Firefox often fires `download` with an empty placeholder before the blob save finishes.
-    // `downloadBlob` sets `__PLAYWRIGHT_LAST_EXPORT` before triggering the anchor click, so after
-    // export settles we always prefer the hook and drain the stray download promise.
-    try {
-      await page.waitForFunction(
-        () => {
-          const w = window as Window & {
-            __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
-          }
-          const blob = w.__PLAYWRIGHT_LAST_EXPORT?.blob
-          return typeof blob?.size === 'number' && blob.size > 64
-        },
-        undefined,
-        { timeout: exportWaitMs },
-      )
+    // Firefox often fires `download` with an empty placeholder. `downloadBlob` sets
+    // `__PLAYWRIGHT_LAST_EXPORT` before the anchor click, so the hook usually appears first.
+    // Poll both: do not block the full exportWaitMs on waitForFunction (slow + flaky when the hook
+    // is missing e.g. reused dev server without VITE_PLAYWRIGHT_EXPORT_HOOK), and read the download
+    // as soon as it settles — a non-empty save can land before we observe the hook in some builds.
+    let settledDownload: Download | undefined
+    const trackDownload = downloadPromise.then((d) => {
+      settledDownload = d
+    })
+
+    const deadline = Date.now() + exportWaitMs
+    let triedReadDownload = false
+
+    while (Date.now() < deadline) {
       const fromHook = await readExportHookPayload(page)
-      if (fromHook) {
-        void downloadPromise.catch(() => {
-          /* ignore orphan download after hook capture */
-        })
+      if (fromHook && fromHook.buffer.byteLength > 64) {
+        void trackDownload.catch(() => {})
         assertExportMatchesFormat(fromHook.buffer, format, fromHook.filename)
         return
       }
-    } catch {
-      /* fall through to download path */
+
+      if (settledDownload !== undefined && !triedReadDownload) {
+        triedReadDownload = true
+        try {
+          const buffer = await readDownloadBuffer(settledDownload)
+          if (buffer.byteLength > 64) {
+            void trackDownload.catch(() => {})
+            assertExportMatchesFormat(buffer, format, settledDownload.suggestedFilename())
+            return
+          }
+        } catch {
+          /* saveAs can fail transiently; keep polling for hook */
+        }
+      }
+
+      await page.waitForTimeout(100)
     }
+
+    void trackDownload.catch(() => {})
   }
 
   const download = await downloadPromise

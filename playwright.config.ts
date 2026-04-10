@@ -116,7 +116,9 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -w apps/web -- --host 127.0.0.1 --port 4173',
     port: 4173,
-    reuseExistingServer: true,
+    // Reusing a manually started dev server can omit VITE_PLAYWRIGHT_EXPORT_HOOK, breaking Firefox
+    // export tests that rely on __PLAYWRIGHT_LAST_EXPORT. CI always boots a fresh server with env below.
+    reuseExistingServer: !process.env.CI,
     env: {
       VITE_PLAYWRIGHT_EXPORT_HOOK: '1',
     },
