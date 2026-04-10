@@ -93,12 +93,15 @@ export async function loadDraft() {
     return project
   }
 
+  // Detach the IDB-backed blob into a fresh in-memory copy
+  const detachedBlob = new Blob([await sourceBlob.arrayBuffer()], { type: sourceBlob.type })
+
   return {
     ...project,
     source: {
       ...project.source,
-      objectUrl: URL.createObjectURL(sourceBlob),
-      ...(project.source.kind === 'video' ? { videoSrcBlob: sourceBlob } : {}),
+      objectUrl: URL.createObjectURL(detachedBlob),
+      ...(project.source.kind === 'video' ? { videoSrcBlob: detachedBlob } : {}),
     },
   }
 }
