@@ -154,60 +154,20 @@ function playwrightExportHookEnabled(): boolean {
   return process.env.VITE_PLAYWRIGHT_EXPORT_HOOK === '1'
 }
 
-type ExportCaptureResult =
-  | { source: 'download'; download: Download }
-  | { source: 'hook'; buffer: Buffer; filename: string }
-
-async function raceExportDownloadOrHook(page: Page, timeoutMs: number): Promise<ExportCaptureResult> {
-  const downloadPromise = page.waitForEvent('download', { timeout: timeoutMs }).then((download) => ({
-    source: 'download' as const,
-    download,
-  }))
-
-  const browserName = page.context().browser()?.browserType().name() ?? ''
-  const raceWithHook = playwrightExportHookEnabled() && browserName === 'firefox'
-
-  if (!raceWithHook) {
-    return downloadPromise
-  }
-
-  const hookPromise = page
-    .waitForFunction(
-      () => {
-        const w = window as Window & {
-          __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
-        }
-        const blob = w.__PLAYWRIGHT_LAST_EXPORT?.blob
-        return typeof blob?.size === 'number' && blob.size > 64
-      },
-      undefined,
-      { timeout: timeoutMs },
-    )
-    .then(async () => {
-      const payload = await page.evaluate(async () => {
-        const w = window as Window & {
-          __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
-        }
-        const entry = w.__PLAYWRIGHT_LAST_EXPORT
-        if (!entry) {
-          return null
-        }
-        const buf = await entry.blob.arrayBuffer()
-        const filename = entry.filename
-        delete w.__PLAYWRIGHT_LAST_EXPORT
-        return { buf: Array.from(new Uint8Array(buf)), filename }
-      })
-      if (!payload) {
-        throw new Error('__PLAYWRIGHT_LAST_EXPORT missing after hook wait')
-      }
-      return {
-        source: 'hook' as const,
-        buffer: Buffer.from(payload.buf),
-        filename: payload.filename,
-      }
-    })
-
-  return Promise.race([downloadPromise, hookPromise])
+async function readExportHookPayload(page: Page): Promise<{ buffer: Buffer; filename: string } | null> {
+  return page.evaluate(async () => {
+    const w = window as Window & {
+      __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
+    }
+    const entry = w.__PLAYWRIGHT_LAST_EXPORT
+    if (!entry || entry.blob.size <= 64) {
+      return null
+    }
+    const buf = await entry.blob.arrayBuffer()
+    const filename = entry.filename
+    delete w.__PLAYWRIGHT_LAST_EXPORT
+    return { buf: Array.from(new Uint8Array(buf)), filename }
+  })
 }
 
 export async function exportAndAssertFormat(page: Page, format: E2eExportFormat) {
@@ -224,20 +184,48 @@ export async function exportAndAssertFormat(page: Page, format: E2eExportFormat)
   // GIF palette encoding via ffmpeg.wasm is much slower on Firefox than Chrome/WebKit.
   const exportWaitMs = format === 'gif' ? 420_000 : 180_000
 
-  const capturePromise = raceExportDownloadOrHook(page, exportWaitMs)
-  await exportButton.click()
+  const browserName = page.context().browser()?.browserType().name() ?? ''
+  const preferExportHook =
+    playwrightExportHookEnabled() && browserName === 'firefox'
 
-  const outcome = await capturePromise
+  const downloadPromise = page.waitForEvent('download', { timeout: exportWaitMs })
+
+  await exportButton.click()
 
   await expect(exportButton).toBeEnabled({ timeout: exportWaitMs })
 
-  if (outcome.source === 'download') {
-    const buffer = await readDownloadBuffer(outcome.download)
-    assertExportMatchesFormat(buffer, format, outcome.download.suggestedFilename())
-    return
+  if (preferExportHook) {
+    // Firefox often fires `download` with an empty placeholder before the blob save finishes.
+    // `downloadBlob` sets `__PLAYWRIGHT_LAST_EXPORT` before triggering the anchor click, so after
+    // export settles we always prefer the hook and drain the stray download promise.
+    try {
+      await page.waitForFunction(
+        () => {
+          const w = window as Window & {
+            __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
+          }
+          const blob = w.__PLAYWRIGHT_LAST_EXPORT?.blob
+          return typeof blob?.size === 'number' && blob.size > 64
+        },
+        undefined,
+        { timeout: exportWaitMs },
+      )
+      const fromHook = await readExportHookPayload(page)
+      if (fromHook) {
+        void downloadPromise.catch(() => {
+          /* ignore orphan download after hook capture */
+        })
+        assertExportMatchesFormat(fromHook.buffer, format, fromHook.filename)
+        return
+      }
+    } catch {
+      /* fall through to download path */
+    }
   }
 
-  assertExportMatchesFormat(outcome.buffer, format, outcome.filename)
+  const download = await downloadPromise
+  const buffer = await readDownloadBuffer(download)
+  assertExportMatchesFormat(buffer, format, download.suggestedFilename())
 }
 
 /**
