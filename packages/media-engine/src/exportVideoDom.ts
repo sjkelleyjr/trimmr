@@ -107,6 +107,7 @@ export function waitForVideoMetadata(video: HTMLVideoElement): Promise<void> {
  *
  * Some WebKit builds leave `seeking === true` or omit `seeked` during capture/export;
  * we poll `seeking` and use a hard timeout so export cannot hang indefinitely.
+ * then reject after that timeout, so callers don't silently encode the previous frame as a duplicate
  */
 export function seekVideoToTime(video: HTMLVideoElement, seconds: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -164,9 +165,7 @@ export function seekVideoToTime(video: HTMLVideoElement, seconds: number): Promi
       }
     }, 32)
 
-    timeoutId = window.setTimeout(() => {
-      finish()
-    }, 500)
+    timeoutId = window.setTimeout(handleError, 2000)
   })
 }
 

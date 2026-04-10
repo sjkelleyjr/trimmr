@@ -163,25 +163,21 @@ function canvasSourceDimensions(
   source: CanvasImageSource,
   fallbackW: number,
   fallbackH: number,
-): { w: number; h: number } {
+): { w: number; h: number } | null {
   if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
     const w = source.displayWidth
     const h = source.displayHeight
-    if (w > 0 && h > 0) {
-      return { w, h }
-    }
+    return w > 0 && h > 0 ? { w, h } : { w: fallbackW, h: fallbackH }
   }
   if (typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap) {
     const w = source.width
     const h = source.height
-    if (w > 0 && h > 0) {
-      return { w, h }
-    }
+    return w > 0 && h > 0 ? { w, h } : { w: fallbackW, h: fallbackH }
   }
   if (source instanceof HTMLCanvasElement) {
-    if (source.width > 0 && source.height > 0) {
-      return { w: source.width, h: source.height }
-    }
+    return source.width > 0 && source.height > 0
+      ? { w: source.width, h: source.height }
+      : { w: fallbackW, h: fallbackH }
   }
   if ('videoWidth' in source) {
     const video = source as HTMLVideoElement
@@ -195,7 +191,7 @@ function canvasSourceDimensions(
       return { w: image.naturalWidth, h: image.naturalHeight }
     }
   }
-  return { w: fallbackW, h: fallbackH }
+  return null
 }
 
 function drawCover(
@@ -204,8 +200,11 @@ function drawCover(
   targetWidth: number,
   targetHeight: number,
 ) {
-  const { w: sourceWidth, h: sourceHeight } = canvasSourceDimensions(source, targetWidth, targetHeight)
-  const sourceAspect = sourceWidth / Math.max(1, sourceHeight)
+  const dims = canvasSourceDimensions(source, targetWidth, targetHeight)
+  if (!dims) {
+    return
+  }
+  const sourceAspect = dims.w / Math.max(1, dims.h)
   const targetAspect = targetWidth / targetHeight
 
   let drawWidth = targetWidth

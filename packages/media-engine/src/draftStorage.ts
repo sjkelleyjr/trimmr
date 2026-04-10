@@ -115,12 +115,14 @@ export async function loadDraft() {
     return clearUnrestorableSource(project)
   }
 
+  const detachedBlob = new Blob([await bytes.arrayBuffer()], { type: bytes.type })
+
   return {
     ...project,
     source: {
       ...project.source,
-      objectUrl: URL.createObjectURL(bytes),
-      ...(project.source.kind === 'video' ? { videoSrcBlob: bytes } : {}),
+      objectUrl: URL.createObjectURL(detachedBlob),
+      ...(project.source.kind === 'video' ? { videoSrcBlob: detachedBlob } : {}),
     },
   }
 }
