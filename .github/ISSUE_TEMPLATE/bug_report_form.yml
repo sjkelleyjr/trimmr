@@ -1,5 +1,5 @@
-name: Bug report
-description: Report a reproducible bug in trimmr.
+name: Bug report (form)
+description: Same bug checklist as the default template, as structured GitHub fields.
 title: "bug: "
 labels:
   - bug
