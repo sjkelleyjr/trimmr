@@ -427,7 +427,8 @@ function App() {
     project.source?.kind === 'video' && project.source.audioTrackStatus !== 'absent'
   const snapshot = useMemo(() => timelineSnapshot(project), [project])
   const githubIssueUrl =
-    'https://github.com/sjkelleyjr/trimmr/issues/new?template=bug_report.yml&title=bug%3A+'
+    'https://github.com/sjkelleyjr/trimmr/issues/new?' +
+    new URLSearchParams({ template: 'bug_report.yml' }).toString()
   const maxTimelineMs = project.source?.durationMs ?? 1000
   const maxOutputDurationMs = project.clip ? outputDurationMs(project.clip) : 0
   const timelineDenominator = Math.max(1, maxTimelineMs)
