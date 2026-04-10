@@ -1,5 +1,11 @@
 import { createId } from '@trimmr/shared'
-import type { EditorProject, ExportFormat, ExportPreset, SourceMedia } from '@trimmr/shared'
+import type {
+  EditorProject,
+  ExportFormat,
+  ExportPreset,
+  SourceMedia,
+  SupportedImportFormat,
+} from '@trimmr/shared'
 import {
   buildTranscodeArgs,
   detectImportFormat,
@@ -26,6 +32,7 @@ import {
   waitForVideoMetadata,
 } from './exportVideoDom'
 import { loadFfmpeg } from './ffmpegLoader'
+import type { LoadedFfmpeg } from './ffmpegLoader'
 import {
   extractMp4VideoPresentationMetadata,
   probeImportCodecFromFile,
@@ -57,6 +64,77 @@ function awaitWithMetadataTimeout(
       () => { window.clearTimeout(id); fail() },
     )
   })
+}
+
+/**
+ * Convert an animated image (GIF/WebP/APNG) to WebM so video preview/seek/expoer works
+ */
+async function convertAnimatedImageToWebmViaFfmpeg(
+  file: File,
+  format: SupportedImportFormat,
+): Promise<{ blob: Blob; durationMs: number; width: number; height: number } | null> {
+  const inputName =
+    format === 'gif' ? 'in.gif'
+      : format === 'animated-webp' ? 'in.webp'
+        : format === 'apng' ? 'in.png'
+          : null
+  if (!inputName) {
+    return null
+  }
+
+  let loaded: LoadedFfmpeg
+  try {
+    loaded = await loadFfmpeg()
+  } catch {
+    return null
+  }
+  const { ffmpeg, fetchFile } = loaded
+
+  try {
+    await ffmpeg.writeFile(inputName, await fetchFile(file))
+    const exitCode = await ffmpeg.exec([
+      '-i', inputName,
+      '-c:v', 'libvpx',
+      '-b:v', '1M',
+      '-an',
+      'out.webm',
+    ])
+    if (exitCode !== 0) {
+      return null
+    }
+
+    const outputData = await ffmpeg.readFile('out.webm')
+    const bytes = outputData instanceof Uint8Array ? outputData : new Uint8Array(outputData)
+    const normalized = new Uint8Array(bytes.byteLength)
+    normalized.set(bytes)
+    const blob = new Blob([normalized.buffer], { type: 'video/webm' })
+
+    const url = URL.createObjectURL(blob)
+    try {
+      const probe = document.createElement('video')
+      probe.preload = 'metadata'
+      probe.muted = true
+      probe.src = url
+      await awaitWithMetadataTimeout('Unable to load video metadata', (ok, fail) => {
+        probe.onloadedmetadata = ok
+        probe.onerror = fail
+      })
+      const durationMs = Math.round(probe.duration * 1000)
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        return null
+      }
+      return { blob, durationMs, width: probe.videoWidth, height: probe.videoHeight }
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  } catch {
+    return null
+  } finally {
+    await Promise.allSettled([
+      ffmpeg.deleteFile(inputName),
+      ffmpeg.deleteFile('out.webm'),
+    ])
+  }
 }
 
 export interface MediaExportResult {
@@ -258,6 +336,32 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
       audioTrackStatus,
       videoSrcBlob: file,
       importCodecProbe: probe,
+    }
+  }
+
+  // Browsers without `ImageDecoder` (Firefox/Safari) can't extract per-frame
+  // bitmaps from an animated image, so the seek/preview/export pipeline can't
+  // address individual frames. Convert to WebM via ffmpeg and route the result
+  // through the standard video path. Falls through on any failure.
+  if (typeof ImageDecoder === 'undefined') {
+    const converted = await convertAnimatedImageToWebmViaFfmpeg(file, format)
+    if (converted) {
+      URL.revokeObjectURL(objectUrl)
+      return {
+        id: createId('source'),
+        name: file.name,
+        objectUrl: URL.createObjectURL(converted.blob),
+        mimeType: 'video/webm',
+        kind: 'video',
+        format: 'webm',
+        width: converted.width,
+        height: converted.height,
+        durationMs: converted.durationMs,
+        fileSizeBytes: converted.blob.size,
+        estimatedBitrateKbps: estimateBitrateKbps(converted.blob.size, converted.durationMs),
+        audioTrackStatus: 'absent',
+        videoSrcBlob: converted.blob,
+      }
     }
   }
 

@@ -148,25 +148,47 @@ export async function drawProjectFrame({
   }
 }
 
+/**
+ * Duck-typed dimension lookup covering the `CanvasImageSource` used
+ */
+function resolveSourceDimensions(
+  source: CanvasImageSource,
+): { width: number; height: number } | null {
+  const obj = source as {
+    videoWidth?: number
+    videoHeight?: number
+    naturalWidth?: number
+    naturalHeight?: number
+    displayWidth?: number
+    displayHeight?: number
+    width?: number
+    height?: number
+  }
+  const candidates: Array<[number | undefined, number | undefined]> = [
+    [obj.videoWidth, obj.videoHeight],
+    [obj.naturalWidth, obj.naturalHeight],
+    [obj.displayWidth, obj.displayHeight],
+    [obj.width, obj.height],
+  ]
+  for (const [width, height] of candidates) {
+    if (typeof width === 'number' && width > 0 && typeof height === 'number' && height > 0) {
+      return { width, height }
+    }
+  }
+  return null
+}
+
 function drawCover(
   context: CanvasRenderingContext2D,
   source: CanvasImageSource,
   targetWidth: number,
   targetHeight: number,
 ) {
-  const sourceWidth =
-    'videoWidth' in source
-      ? source.videoWidth
-      : 'naturalWidth' in source
-        ? source.naturalWidth
-        : targetWidth
-  const sourceHeight =
-    'videoHeight' in source
-      ? source.videoHeight
-      : 'naturalHeight' in source
-        ? source.naturalHeight
-        : targetHeight
-  const sourceAspect = sourceWidth / sourceHeight
+  const dims = resolveSourceDimensions(source)
+  if (!dims) {
+    return
+  }
+  const sourceAspect = dims.width / dims.height
   const targetAspect = targetWidth / targetHeight
 
   let drawWidth = targetWidth

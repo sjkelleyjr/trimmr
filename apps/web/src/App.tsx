@@ -249,6 +249,9 @@ function App() {
   const [editingOverlayId, setEditingOverlayId] = useState<string | null>(null)
   const [editingOverlayText, setEditingOverlayText] = useState('')
   const [copiedOverlay, setCopiedOverlay] = useState<(typeof history.present.overlays)[number] | null>(null)
+  /** Bumped after the animated-image decoder finishes (or after `<img onLoad>`) to
+   * re-fire the render effect once frames are actually drawable. */
+  const [animatedImageReadyVersion, setAnimatedImageReadyVersion] = useState(0)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const previewFrameRef = useRef<HTMLDivElement | null>(null)
@@ -273,6 +276,7 @@ function App() {
   const mediaSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null)
   const animatedImageDecoderRef = useRef<ImageDecoder | null>(null)
   const animatedImageTimelineRef = useRef<{
+    frames: ImageBitmap[]
     totalDurationMs: number
     cumulativeDurationsMs: number[]
   } | null>(null)
@@ -822,38 +826,29 @@ function App() {
         return
       }
 
-      let sourceImageFrame: VideoFrame | null = null
-      if (
-        project.source.kind === 'animated-image' &&
-        animatedImageDecoderRef.current &&
-        animatedImageTimelineRef.current
-      ) {
+      // Pre-extracted bitmaps live for the lifetime of the source — never close
+      // them per-render or Chromium will return a "broken" frame on the next read.
+      let sourceImageFrame: CanvasImageSource | null = null
+      if (project.source.kind === 'animated-image' && animatedImageTimelineRef.current) {
+        const { frames, cumulativeDurationsMs, totalDurationMs } = animatedImageTimelineRef.current
         const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
         const frameIndex = pickAnimatedFrameIndex(
-          animatedImageTimelineRef.current.cumulativeDurationsMs,
+          cumulativeDurationsMs,
           sourceTimeMs,
-          animatedImageTimelineRef.current.totalDurationMs,
+          totalDurationMs,
         )
-        const decoded = await animatedImageDecoderRef.current.decode({
-          frameIndex,
-          completeFramesOnly: true,
-        })
-        sourceImageFrame = decoded.image
+        sourceImageFrame = frames[frameIndex] ?? null
       }
 
-      try {
-        await drawProjectFrame({
-          canvas: canvasRef.current,
-          project,
-          sourceVideo: videoRef.current,
-          sourceImage: imageRef.current,
-          sourceImageFrame,
-          outputTimeMs: timeMs,
-          renderOverlay: false,
-        })
-      } finally {
-        sourceImageFrame?.close()
-      }
+      await drawProjectFrame({
+        canvas: canvasRef.current,
+        project,
+        sourceVideo: videoRef.current,
+        sourceImage: imageRef.current,
+        sourceImageFrame,
+        outputTimeMs: timeMs,
+        renderOverlay: false,
+      })
     },
     [project],
   )
@@ -874,88 +869,86 @@ function App() {
     let cancelled = false
 
     const resetAnimatedImageDecoder = () => {
+      animatedImageTimelineRef.current?.frames.forEach((frame) => frame.close())
+      animatedImageTimelineRef.current = null
       animatedImageDecoderRef.current?.close()
       animatedImageDecoderRef.current = null
-      animatedImageTimelineRef.current = null
     }
 
-    if (project.source?.kind !== 'animated-image') {
-      resetAnimatedImageDecoder()
-      return
-    }
-
-    if (typeof ImageDecoder === 'undefined') {
+    if (project.source?.kind !== 'animated-image' || typeof ImageDecoder === 'undefined') {
       resetAnimatedImageDecoder()
       return
     }
 
     const source = project.source
-    if (!source || source.kind !== 'animated-image') {
-      return
-    }
 
     const initializeAnimatedImageDecoder = async () => {
+      // All resources created here are local until `committed` flips true.
+      // The `finally` block closes anything still local — this handles every
+      // exit path uniformly: cancellation, early return, thrown errors, and
+      // partial `createImageBitmap` failures mid-loop.
+      let decoder: ImageDecoder | null = null
+      const frames: ImageBitmap[] = []
+      let committed = false
+
       try {
         const mimeType = source.mimeType || 'image/gif'
         const supported = await ImageDecoder.isTypeSupported(mimeType)
-        if (!supported || cancelled) {
-          return
-        }
+        if (!supported || cancelled) return
 
         const response = await fetch(source.objectUrl)
-        if (!response.ok || cancelled) {
-          return
-        }
+        if (!response.ok || cancelled) return
 
         const bytes = await response.arrayBuffer()
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
 
-        resetAnimatedImageDecoder()
-        const decoder = new ImageDecoder({
-          type: mimeType,
-          data: bytes,
-          preferAnimation: true,
-        })
+        decoder = new ImageDecoder({ type: mimeType, data: bytes, preferAnimation: true })
         await decoder.tracks.ready
-        if (cancelled) {
-          decoder.close()
-          return
-        }
+        if (cancelled) return
 
         const track = decoder.tracks.selectedTrack
         const frameCount = track?.frameCount ?? 0
-        if (!track || frameCount < 1) {
-          decoder.close()
-          return
-        }
+        if (!track || frameCount < 1) return
 
+        // Pre-extract every frame as an `ImageBitmap`. Subsequent renders read
+        // from this stable array — we never re-decode, so closing the source
+        // `VideoFrame` (which invalidates Chromium's per-frameIndex cache slot)
+        // is safe.
         const cumulativeDurationsMs: number[] = []
         let totalDurationMs = 0
         for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-          const decoded = await decoder.decode({
-            frameIndex,
-            completeFramesOnly: true,
-          })
-          const frameDurationMs = Math.max(16, Math.round((decoded.image.duration ?? 100_000) / 1000))
+          if (cancelled) return
+          const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true })
+          const frameDurationMs = Math.max(
+            16,
+            Math.round((decoded.image.duration ?? 100_000) / 1000),
+          )
+          const bitmap = await createImageBitmap(decoded.image)
+          decoded.image.close()
           totalDurationMs += frameDurationMs
           cumulativeDurationsMs.push(totalDurationMs)
-          decoded.image.close()
+          frames.push(bitmap)
         }
 
-        if (cancelled) {
-          decoder.close()
-          return
-        }
+        if (cancelled) return
 
         animatedImageDecoderRef.current = decoder
         animatedImageTimelineRef.current = {
+          frames,
           totalDurationMs: Math.max(1, totalDurationMs),
           cumulativeDurationsMs,
         }
+        committed = true
+        // Re-fire the render effect now that frames are drawable; the effect may
+        // have already run once with `animatedImageTimelineRef.current === null`.
+        setAnimatedImageReadyVersion((version) => version + 1)
       } catch {
-        resetAnimatedImageDecoder()
+        /* swallow — `finally` releases any local resources */
+      } finally {
+        if (!committed) {
+          frames.forEach((frame) => frame.close())
+          decoder?.close()
+        }
       }
     }
 
@@ -1145,7 +1138,7 @@ function App() {
     renderAt(playheadMs).catch(() => {
       setStatus('Preview rendering failed for the current frame.')
     })
-  }, [isBusy, playheadMs, project, renderAt])
+  }, [isBusy, playheadMs, project, renderAt, animatedImageReadyVersion])
 
   useEffect(() => {
     const video = videoRef.current
@@ -1305,37 +1298,30 @@ function App() {
               preset,
               onProgress: handleExportProgress,
               drawFrame: async (timeMs) => {
-                let sourceImageFrame: VideoFrame | null = null
+                let sourceImageFrame: CanvasImageSource | null = null
                 if (
                   project.source?.kind === 'animated-image' &&
-                  animatedImageDecoderRef.current &&
                   animatedImageTimelineRef.current
                 ) {
+                  const { frames, cumulativeDurationsMs, totalDurationMs } =
+                    animatedImageTimelineRef.current
                   const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
                   const frameIndex = pickAnimatedFrameIndex(
-                    animatedImageTimelineRef.current.cumulativeDurationsMs,
+                    cumulativeDurationsMs,
                     sourceTimeMs,
-                    animatedImageTimelineRef.current.totalDurationMs,
+                    totalDurationMs,
                   )
-                  const decoded = await animatedImageDecoderRef.current.decode({
-                    frameIndex,
-                    completeFramesOnly: true,
-                  })
-                  sourceImageFrame = decoded.image
+                  sourceImageFrame = frames[frameIndex] ?? null
                 }
 
-                try {
-                  await drawProjectFrame({
-                    canvas: canvasRef.current!,
-                    project,
-                    sourceVideo: videoRef.current,
-                    sourceImage: imageRef.current,
-                    sourceImageFrame,
-                    outputTimeMs: timeMs,
-                  })
-                } finally {
-                  sourceImageFrame?.close()
-                }
+                await drawProjectFrame({
+                  canvas: canvasRef.current!,
+                  project,
+                  sourceVideo: videoRef.current,
+                  sourceImage: imageRef.current,
+                  sourceImageFrame,
+                  outputTimeMs: timeMs,
+                })
               },
             })
 
@@ -1482,7 +1468,27 @@ function App() {
               </>
             ) : null}
             {project.source?.kind === 'animated-image' ? (
-              <img ref={imageRef} src={project.source.objectUrl} alt="" hidden />
+              // `key` forces a fresh element on every import so the previous
+              // GIF's decoded bitmap can never bleed through. Off-screen styling
+              // (rather than `hidden`/`display:none`) ensures Firefox actually
+              // decodes the image so `drawImage` has pixels to read. `onLoad`
+              // bumps the version state so the render effect re-fires the moment
+              // the fallback `<img>` bitmap is ready.
+              <img
+                key={project.source.id}
+                ref={imageRef}
+                src={project.source.objectUrl}
+                alt=""
+                aria-hidden="true"
+                onLoad={() => setAnimatedImageReadyVersion((version) => version + 1)}
+                style={{
+                  position: 'absolute',
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  pointerEvents: 'none',
+                }}
+              />
             ) : null}
             <button
               className="preview-history-button preview-history-button-left"

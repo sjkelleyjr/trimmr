@@ -348,7 +348,11 @@ describe('renderProjectFrame helpers', () => {
     expect(context.fillText).not.toHaveBeenCalled()
   })
 
-  it('falls back to target dimensions when an image source has no intrinsic size', async () => {
+  it('skips drawing when an image source has no intrinsic size', async () => {
+    // Previously `drawCover` stretched unsized sources to canvas dimensions,
+    // which silently squashed `ImageBitmap`/`VideoFrame` inputs (no
+    // `naturalWidth`/`videoWidth`). The resolver now returns null and we skip
+    // the draw entirely — matching the sibling "no frame or image" behaviour.
     const project = createProject({
       source: {
         ...createProject().source!,
@@ -387,7 +391,7 @@ describe('renderProjectFrame helpers', () => {
       outputTimeMs: 0,
     })
 
-    expect(context.drawImage).toHaveBeenCalled()
+    expect(context.drawImage).not.toHaveBeenCalled()
   })
 
   it('prefers sourceImageFrame over sourceImage for animated sources', async () => {
