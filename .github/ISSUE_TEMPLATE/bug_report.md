@@ -6,7 +6,9 @@ labels: bug
 assignees: ''
 ---
 
-Thanks for reporting a bug. Please fill in every section below so we can reproduce and debug quickly.
+We try to limit the analytics we track in trimmr so we rely heavily on community bug reports.  Thank you for taking the time to report this bug! ❤️
+
+Please fill in every section below so we can reproduce and debug quickly.
 
 ### What happened?
 

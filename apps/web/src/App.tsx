@@ -2163,7 +2163,7 @@ function App() {
       <footer className="app-footer">
         <a href="/workflows/">guides for how to trim, resize, convert to gif, and more</a>
         <a href={githubIssueUrl} target="_blank" rel="noreferrer">
-          found a bug? open an issue
+          we love bug reports ❤️
         </a>
       </footer>
     </main>
