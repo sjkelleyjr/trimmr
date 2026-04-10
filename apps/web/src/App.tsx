@@ -110,6 +110,24 @@ function durationBucket(durationMs: number): string {
   return '>=120s'
 }
 
+/** ImageDecoder `type` must match container; `application/octet-stream` GIFs fail on Firefox. */
+function imageDecoderMimeForAnimatedSource(source: NonNullable<EditorProject['source']>): string {
+  if (source.kind !== 'animated-image') {
+    return source.mimeType || 'application/octet-stream'
+  }
+  const n = source.name.toLowerCase()
+  if (source.format === 'gif' || n.endsWith('.gif')) {
+    return 'image/gif'
+  }
+  if (source.format === 'animated-webp' || n.endsWith('.webp')) {
+    return 'image/webp'
+  }
+  if (source.format === 'apng' || n.endsWith('.apng')) {
+    return 'image/apng'
+  }
+  return source.mimeType || 'application/octet-stream'
+}
+
 function dimensionBucket(width: number, height: number): string {
   const pixels = Math.max(0, width) * Math.max(0, height)
   if (pixels <= 0) return 'unknown'
@@ -125,6 +143,9 @@ const FONT_OPTIONS = [
   { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
   { label: 'Display', value: '"Arial Black", Impact, sans-serif' },
 ]
+
+/** Select value: restore export canvas to clamped native source dimensions (see `set-export-size` limits). */
+const EXPORT_DIMENSION_SOURCE_VALUE = '__source__'
 
 const EXPORT_CANVAS_PRESETS = [
   { value: '720x720', label: 'Square 720 — 720 × 720' },
@@ -152,6 +173,20 @@ function exportCanvasMatchesPreset(width: number, height: number): boolean {
     const parsed = parseExportCanvasSize(preset.value)
     return parsed.width === width && parsed.height === height
   })
+}
+
+function clampedSourceExportDimensions(source: NonNullable<EditorProject['source']>) {
+  const w = clamp(source.width || 1080, 240, 1080)
+  const h = clamp(source.height || 1920, 240, 1920)
+  return { width: w, height: h }
+}
+
+function exportPresetMatchesSourceDimensions(
+  preset: EditorProject['exportPreset'],
+  source: NonNullable<EditorProject['source']>,
+) {
+  const { width, height } = clampedSourceExportDimensions(source)
+  return preset.width === width && preset.height === height
 }
 
 function overlayBackgroundCss(backgroundOpacity: number) {
@@ -271,7 +306,8 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const mediaSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const animatedImageDecoderRef = useRef<ImageDecoder | null>(null)
+  /** Composited GIF/WebP frames; avoids Firefox random `decode(frameIndex)` and canvas+`<img>` first-frame behavior. */
+  const animatedImageFrameBitmapsRef = useRef<ImageBitmap[] | null>(null)
   const animatedImageTimelineRef = useRef<{
     totalDurationMs: number
     cumulativeDurationsMs: number[]
@@ -822,38 +858,29 @@ function App() {
         return
       }
 
-      let sourceImageFrame: VideoFrame | null = null
-      if (
-        project.source.kind === 'animated-image' &&
-        animatedImageDecoderRef.current &&
-        animatedImageTimelineRef.current
-      ) {
-        const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
-        const frameIndex = pickAnimatedFrameIndex(
-          animatedImageTimelineRef.current.cumulativeDurationsMs,
-          sourceTimeMs,
-          animatedImageTimelineRef.current.totalDurationMs,
-        )
-        const decoded = await animatedImageDecoderRef.current.decode({
-          frameIndex,
-          completeFramesOnly: true,
-        })
-        sourceImageFrame = decoded.image
+      let sourceImageFrame: CanvasImageSource | null = null
+      if (project.source.kind === 'animated-image' && animatedImageTimelineRef.current) {
+        const bitmaps = animatedImageFrameBitmapsRef.current
+        if (bitmaps && bitmaps.length > 0) {
+          const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
+          const frameIndex = pickAnimatedFrameIndex(
+            animatedImageTimelineRef.current.cumulativeDurationsMs,
+            sourceTimeMs,
+            animatedImageTimelineRef.current.totalDurationMs,
+          )
+          sourceImageFrame = bitmaps[frameIndex] ?? null
+        }
       }
 
-      try {
-        await drawProjectFrame({
-          canvas: canvasRef.current,
-          project,
-          sourceVideo: videoRef.current,
-          sourceImage: imageRef.current,
-          sourceImageFrame,
-          outputTimeMs: timeMs,
-          renderOverlay: false,
-        })
-      } finally {
-        sourceImageFrame?.close()
-      }
+      await drawProjectFrame({
+        canvas: canvasRef.current,
+        project,
+        sourceVideo: videoRef.current,
+        sourceImage: imageRef.current,
+        sourceImageFrame,
+        outputTimeMs: timeMs,
+        renderOverlay: false,
+      })
     },
     [project],
   )
@@ -873,19 +900,24 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
-    const resetAnimatedImageDecoder = () => {
-      animatedImageDecoderRef.current?.close()
-      animatedImageDecoderRef.current = null
+    const resetAnimatedImageAssets = () => {
+      const bitmaps = animatedImageFrameBitmapsRef.current
+      if (bitmaps) {
+        for (const bitmap of bitmaps) {
+          bitmap.close()
+        }
+        animatedImageFrameBitmapsRef.current = null
+      }
       animatedImageTimelineRef.current = null
     }
 
     if (project.source?.kind !== 'animated-image') {
-      resetAnimatedImageDecoder()
+      resetAnimatedImageAssets()
       return
     }
 
     if (typeof ImageDecoder === 'undefined') {
-      resetAnimatedImageDecoder()
+      resetAnimatedImageAssets()
       return
     }
 
@@ -896,7 +928,7 @@ function App() {
 
     const initializeAnimatedImageDecoder = async () => {
       try {
-        const mimeType = source.mimeType || 'image/gif'
+        const mimeType = imageDecoderMimeForAnimatedSource(source)
         const supported = await ImageDecoder.isTypeSupported(mimeType)
         if (!supported || cancelled) {
           return
@@ -912,7 +944,7 @@ function App() {
           return
         }
 
-        resetAnimatedImageDecoder()
+        resetAnimatedImageAssets()
         const decoder = new ImageDecoder({
           type: mimeType,
           data: bytes,
@@ -933,29 +965,46 @@ function App() {
 
         const cumulativeDurationsMs: number[] = []
         let totalDurationMs = 0
+        const frameBitmaps: ImageBitmap[] = []
         for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
           const decoded = await decoder.decode({
             frameIndex,
-            completeFramesOnly: true,
+            completeFramesOnly: false,
           })
           const frameDurationMs = Math.max(16, Math.round((decoded.image.duration ?? 100_000) / 1000))
           totalDurationMs += frameDurationMs
           cumulativeDurationsMs.push(totalDurationMs)
+
+          try {
+            const bitmap = await createImageBitmap(decoded.image)
+            frameBitmaps.push(bitmap)
+          } catch {
+            decoded.image.close()
+            for (const bitmap of frameBitmaps) {
+              bitmap.close()
+            }
+            decoder.close()
+            return
+          }
           decoded.image.close()
         }
 
+        decoder.close()
+
         if (cancelled) {
-          decoder.close()
+          for (const bitmap of frameBitmaps) {
+            bitmap.close()
+          }
           return
         }
 
-        animatedImageDecoderRef.current = decoder
+        animatedImageFrameBitmapsRef.current = frameBitmaps
         animatedImageTimelineRef.current = {
           totalDurationMs: Math.max(1, totalDurationMs),
           cumulativeDurationsMs,
         }
       } catch {
-        resetAnimatedImageDecoder()
+        resetAnimatedImageAssets()
       }
     }
 
@@ -963,7 +1012,7 @@ function App() {
 
     return () => {
       cancelled = true
-      resetAnimatedImageDecoder()
+      resetAnimatedImageAssets()
     }
   }, [project.source])
 
@@ -1059,6 +1108,14 @@ function App() {
   useLayoutEffect(() => {
     bindVideoSource(project.source)
   }, [bindVideoSource, project.source])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || project.source?.kind !== 'video' || !project.clip) {
+      return
+    }
+    video.playbackRate = project.clip.playbackRate
+  }, [project.clip?.playbackRate, project.clip, project.source?.kind])
 
   useEffect(
     () => () => {
@@ -1305,37 +1362,28 @@ function App() {
               preset,
               onProgress: handleExportProgress,
               drawFrame: async (timeMs) => {
-                let sourceImageFrame: VideoFrame | null = null
-                if (
-                  project.source?.kind === 'animated-image' &&
-                  animatedImageDecoderRef.current &&
-                  animatedImageTimelineRef.current
-                ) {
-                  const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
-                  const frameIndex = pickAnimatedFrameIndex(
-                    animatedImageTimelineRef.current.cumulativeDurationsMs,
-                    sourceTimeMs,
-                    animatedImageTimelineRef.current.totalDurationMs,
-                  )
-                  const decoded = await animatedImageDecoderRef.current.decode({
-                    frameIndex,
-                    completeFramesOnly: true,
-                  })
-                  sourceImageFrame = decoded.image
+                let sourceImageFrame: CanvasImageSource | null = null
+                if (project.source?.kind === 'animated-image' && animatedImageTimelineRef.current) {
+                  const bitmaps = animatedImageFrameBitmapsRef.current
+                  if (bitmaps && bitmaps.length > 0) {
+                    const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
+                    const frameIndex = pickAnimatedFrameIndex(
+                      animatedImageTimelineRef.current.cumulativeDurationsMs,
+                      sourceTimeMs,
+                      animatedImageTimelineRef.current.totalDurationMs,
+                    )
+                    sourceImageFrame = bitmaps[frameIndex] ?? null
+                  }
                 }
 
-                try {
-                  await drawProjectFrame({
-                    canvas: canvasRef.current!,
-                    project,
-                    sourceVideo: videoRef.current,
-                    sourceImage: imageRef.current,
-                    sourceImageFrame,
-                    outputTimeMs: timeMs,
-                  })
-                } finally {
-                  sourceImageFrame?.close()
-                }
+                await drawProjectFrame({
+                  canvas: canvasRef.current!,
+                  project,
+                  sourceVideo: videoRef.current,
+                  sourceImage: imageRef.current,
+                  sourceImageFrame,
+                  outputTimeMs: timeMs,
+                })
               },
             })
 
@@ -1482,7 +1530,13 @@ function App() {
               </>
             ) : null}
             {project.source?.kind === 'animated-image' ? (
-              <img ref={imageRef} src={project.source.objectUrl} alt="" hidden />
+              <img
+                ref={imageRef}
+                className="preview-animated-source-fallback"
+                src={project.source.objectUrl}
+                alt=""
+                aria-hidden
+              />
             ) : null}
             <button
               className="preview-history-button preview-history-button-left"
@@ -1628,6 +1682,10 @@ function App() {
                       >
                         Delete
                       </button>
+                      <p className="preview-overlay-timing-hint">
+                        Captions apply to the whole clip in the export. Use the trim handles under the
+                        preview to choose which part of the video is included.
+                      </p>
                     </div>
                   ) : (
                     <>
@@ -1969,12 +2027,39 @@ function App() {
               <div className="preview-export-select-field">
                 <Field label="Dimensions">
                   <select
-                    value={`${project.exportPreset.width}x${project.exportPreset.height}`}
+                    value={
+                      project.source &&
+                      exportPresetMatchesSourceDimensions(project.exportPreset, project.source)
+                        ? EXPORT_DIMENSION_SOURCE_VALUE
+                        : exportCanvasMatchesPreset(
+                            project.exportPreset.width,
+                            project.exportPreset.height,
+                          )
+                          ? `${project.exportPreset.width}x${project.exportPreset.height}`
+                          : `custom:${project.exportPreset.width}x${project.exportPreset.height}`
+                    }
                     onChange={(event) => {
-                      const { width, height } = parseExportCanvasSize(event.target.value)
+                      const raw = event.target.value
+                      if (raw === EXPORT_DIMENSION_SOURCE_VALUE) {
+                        const src = project.source
+                        if (!src) {
+                          return
+                        }
+                        const { width, height } = clampedSourceExportDimensions(src)
+                        runCommand({ type: 'set-export-size', width, height })
+                        return
+                      }
+                      const value = raw.startsWith('custom:') ? raw.slice('custom:'.length) : raw
+                      const { width, height } = parseExportCanvasSize(value)
                       runCommand({ type: 'set-export-size', width, height })
                     }}
                   >
+                    <option
+                      value={EXPORT_DIMENSION_SOURCE_VALUE}
+                      disabled={!project.source}
+                    >
+                      Original (source size)
+                    </option>
                     {EXPORT_CANVAS_PRESETS.map((preset) => (
                       <option key={preset.value} value={preset.value}>
                         {preset.label}
@@ -1983,9 +2068,13 @@ function App() {
                     {!exportCanvasMatchesPreset(
                       project.exportPreset.width,
                       project.exportPreset.height,
+                    ) &&
+                    !(
+                      project.source &&
+                      exportPresetMatchesSourceDimensions(project.exportPreset, project.source)
                     ) ? (
                       <option
-                        value={`${project.exportPreset.width}x${project.exportPreset.height}`}
+                        value={`custom:${project.exportPreset.width}x${project.exportPreset.height}`}
                       >
                         Custom — {project.exportPreset.width} × {project.exportPreset.height}
                       </option>

@@ -124,9 +124,20 @@ export async function drawProjectFrame({
   }
 
   if (project.source?.kind === 'animated-image') {
-    const animatedSource = sourceImageFrame ?? sourceImage
-    if (animatedSource) {
-      drawCover(context, animatedSource, canvas.width, canvas.height)
+    const frame = sourceImageFrame ?? null
+    const img = sourceImage
+    const frameIsVideo =
+      typeof VideoFrame !== 'undefined' && frame !== null && frame instanceof VideoFrame
+    if (frame && img && frameIsVideo) {
+      try {
+        drawCover(context, frame, canvas.width, canvas.height)
+      } catch {
+        drawCover(context, img, canvas.width, canvas.height)
+      }
+    } else if (frame) {
+      drawCover(context, frame, canvas.width, canvas.height)
+    } else if (img) {
+      drawCover(context, img, canvas.width, canvas.height)
     }
   }
 
@@ -148,25 +159,53 @@ export async function drawProjectFrame({
   }
 }
 
+function canvasSourceDimensions(
+  source: CanvasImageSource,
+  fallbackW: number,
+  fallbackH: number,
+): { w: number; h: number } {
+  if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
+    const w = source.displayWidth
+    const h = source.displayHeight
+    if (w > 0 && h > 0) {
+      return { w, h }
+    }
+  }
+  if (typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap) {
+    const w = source.width
+    const h = source.height
+    if (w > 0 && h > 0) {
+      return { w, h }
+    }
+  }
+  if (source instanceof HTMLCanvasElement) {
+    if (source.width > 0 && source.height > 0) {
+      return { w: source.width, h: source.height }
+    }
+  }
+  if ('videoWidth' in source) {
+    const video = source as HTMLVideoElement
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      return { w: video.videoWidth, h: video.videoHeight }
+    }
+  }
+  if ('naturalWidth' in source) {
+    const image = source as HTMLImageElement
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      return { w: image.naturalWidth, h: image.naturalHeight }
+    }
+  }
+  return { w: fallbackW, h: fallbackH }
+}
+
 function drawCover(
   context: CanvasRenderingContext2D,
   source: CanvasImageSource,
   targetWidth: number,
   targetHeight: number,
 ) {
-  const sourceWidth =
-    'videoWidth' in source
-      ? source.videoWidth
-      : 'naturalWidth' in source
-        ? source.naturalWidth
-        : targetWidth
-  const sourceHeight =
-    'videoHeight' in source
-      ? source.videoHeight
-      : 'naturalHeight' in source
-        ? source.naturalHeight
-        : targetHeight
-  const sourceAspect = sourceWidth / sourceHeight
+  const { w: sourceWidth, h: sourceHeight } = canvasSourceDimensions(source, targetWidth, targetHeight)
+  const sourceAspect = sourceWidth / Math.max(1, sourceHeight)
   const targetAspect = targetWidth / targetHeight
 
   let drawWidth = targetWidth

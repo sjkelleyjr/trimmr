@@ -123,9 +123,10 @@ export function usePlaybackController({
       const previous = lastFrameRef.current ?? timestamp
       const delta = timestamp - previous
       lastFrameRef.current = timestamp
+      const rate = project.clip!.playbackRate
 
       setPlayheadMs((current) => {
-        const next = current + delta
+        const next = current + delta * rate
         const projectDuration = outputDurationMs(project.clip!)
         if (next >= projectDuration) {
           setIsPlaying(false)

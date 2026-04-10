@@ -446,6 +446,257 @@ describe('renderProjectFrame helpers', () => {
     )
   })
 
+  it('draws animated cover using ImageBitmap intrinsic dimensions', async () => {
+    const prev = globalThis.ImageBitmap
+    const MockImageBitmap = class {
+      width = 64
+      height = 32
+    }
+    // @ts-expect-error — test double (jsdom has no ImageBitmap / createImageBitmap)
+    globalThis.ImageBitmap = MockImageBitmap
+    const bitmap = new MockImageBitmap() as unknown as ImageBitmap
+
+    const project = createProject({
+      source: {
+        ...createProject().source!,
+        kind: 'animated-image',
+      },
+    })
+    project.overlays = []
+
+    const context = {
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi.fn(),
+      measureText: vi.fn(() => ({ width: 120 })),
+      fillText: vi.fn(),
+    }
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement
+
+    try {
+      await drawProjectFrame({
+        canvas,
+        project,
+        sourceVideo: null,
+        sourceImage: null,
+        sourceImageFrame: bitmap,
+        outputTimeMs: 0,
+      })
+
+      expect(context.drawImage).toHaveBeenCalledWith(
+        bitmap,
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+      )
+    } finally {
+      globalThis.ImageBitmap = prev
+    }
+  })
+
+  it('draws animated cover using VideoFrame display dimensions when VideoFrame exists', async () => {
+    const prev = globalThis.VideoFrame
+    const MockVideoFrame = class {
+      displayWidth = 24
+      displayHeight = 12
+    }
+    // @ts-expect-error — test double for environments without WebCodecs
+    globalThis.VideoFrame = MockVideoFrame
+    const frame = new MockVideoFrame() as unknown as CanvasImageSource
+
+    const project = createProject({
+      source: {
+        ...createProject().source!,
+        kind: 'animated-image',
+      },
+    })
+    project.overlays = []
+
+    const context = {
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi.fn(),
+      measureText: vi.fn(() => ({ width: 120 })),
+      fillText: vi.fn(),
+    }
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement
+
+    try {
+      await drawProjectFrame({
+        canvas,
+        project,
+        sourceVideo: null,
+        sourceImage: null,
+        sourceImageFrame: frame,
+        outputTimeMs: 0,
+      })
+
+      expect(context.drawImage).toHaveBeenCalledWith(
+        frame,
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+      )
+    } finally {
+      globalThis.VideoFrame = prev
+    }
+  })
+
+  it('falls back to image when drawing a VideoFrame throws', async () => {
+    const prev = globalThis.VideoFrame
+    const MockVideoFrame = class {
+      displayWidth = 8
+      displayHeight = 4
+    }
+    // @ts-expect-error — test double
+    globalThis.VideoFrame = MockVideoFrame
+    const frame = new MockVideoFrame() as unknown as CanvasImageSource
+
+    const project = createProject({
+      source: {
+        ...createProject().source!,
+        kind: 'animated-image',
+      },
+    })
+    project.overlays = []
+
+    const fallbackImage = {
+      naturalWidth: 100,
+      naturalHeight: 50,
+    } as HTMLImageElement
+
+    const context = {
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error('drawImage failed')
+        })
+        .mockImplementation(() => {}),
+      measureText: vi.fn(() => ({ width: 120 })),
+      fillText: vi.fn(),
+    }
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement
+
+    try {
+      await drawProjectFrame({
+        canvas,
+        project,
+        sourceVideo: null,
+        sourceImage: fallbackImage,
+        sourceImageFrame: frame,
+        outputTimeMs: 0,
+      })
+
+      expect(context.drawImage).toHaveBeenCalledTimes(2)
+      expect(context.drawImage).toHaveBeenLastCalledWith(
+        fallbackImage,
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+      )
+    } finally {
+      globalThis.VideoFrame = prev
+    }
+  })
+
+  it('uses canvas fallback dimensions when VideoFrame display size is zero', async () => {
+    const prev = globalThis.VideoFrame
+    const MockVideoFrame = class {
+      displayWidth = 0
+      displayHeight = 0
+    }
+    // @ts-expect-error — test double
+    globalThis.VideoFrame = MockVideoFrame
+    const frame = new MockVideoFrame() as unknown as CanvasImageSource
+
+    const project = createProject({
+      source: {
+        ...createProject().source!,
+        kind: 'animated-image',
+      },
+    })
+    project.overlays = []
+
+    const context = {
+      fillStyle: '',
+      textAlign: '',
+      textBaseline: '',
+      font: '',
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi.fn(),
+      measureText: vi.fn(() => ({ width: 120 })),
+      fillText: vi.fn(),
+    }
+
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement
+
+    try {
+      await drawProjectFrame({
+        canvas,
+        project,
+        sourceVideo: null,
+        sourceImage: null,
+        sourceImageFrame: frame,
+        outputTimeMs: 0,
+      })
+
+      expect(context.drawImage).toHaveBeenCalledWith(
+        frame,
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+      )
+    } finally {
+      globalThis.VideoFrame = prev
+    }
+  })
+
   it('skips drawing when an animated source has no frame or image', async () => {
     const project = createProject({
       source: {

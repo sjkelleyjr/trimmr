@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { GOLDEN_IMPORT_FIXTURES, importFixture } from './e2e-helpers'
 
 /**
- * Deterministic import smoke across the golden fixture list (Chrome + WebKit desktop).
+ * Deterministic import smoke across the golden fixture list (Chrome + Firefox + WebKit desktop).
  * Full export matrix lives in `editor-export.spec.ts`.
  */
 test.describe.configure({ mode: 'serial' })
