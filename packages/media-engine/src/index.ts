@@ -41,6 +41,24 @@ export type { ExportTarget } from './exportResolve'
 export { loadDraft, saveDraft } from './draftStorage'
 export { loadFfmpeg } from './ffmpegLoader'
 
+/** Cap source-import metadata waits so corrupt or undecodable files cannot hang the importer. */
+const SOURCE_METADATA_LOAD_TIMEOUT_MS = 10_000
+
+/** Race a DOM-event-driven `attach` callback against a hard timeout that rejects with `message`. */
+function awaitWithMetadataTimeout(
+  message: string,
+  attach: (ok: () => void, fail: () => void) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const fail = () => reject(new Error(message))
+    const id = window.setTimeout(fail, SOURCE_METADATA_LOAD_TIMEOUT_MS)
+    attach(
+      () => { window.clearTimeout(id); resolve() },
+      () => { window.clearTimeout(id); fail() },
+    )
+  })
+}
+
 export interface MediaExportResult {
   blob: Blob
   filename: string
@@ -200,9 +218,9 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
     let audioTrackStatus: SourceMedia['audioTrackStatus']
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        video.onloadedmetadata = () => resolve()
-        video.onerror = () => reject(new Error('Unable to load video metadata'))
+      await awaitWithMetadataTimeout('Unable to load video metadata', (ok, fail) => {
+        video.onloadedmetadata = ok
+        video.onerror = fail
       })
       width = video.videoWidth
       height = video.videoHeight
@@ -245,9 +263,9 @@ export async function extractSourceMedia(file: File): Promise<SourceMedia> {
 
   const image = new Image()
   image.src = objectUrl
-  await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve()
-    image.onerror = () => reject(new Error('Unable to load image metadata'))
+  await awaitWithMetadataTimeout('Unable to load image metadata', (ok, fail) => {
+    image.onload = ok
+    image.onerror = fail
   })
   const animatedDurationMs = await detectAnimatedImageDurationMs(file, 3000)
 
@@ -290,6 +308,12 @@ export async function exportPreviewToWebM({
     }
   }
 
+  // Built before `start()` so a mid-recording failure rejects `await stopped` instead of hanging it.
+  const stopped = new Promise<void>((resolve, reject) => {
+    recorder.onstop = () => resolve()
+    recorder.onerror = () => reject(new Error('MediaRecorder error'))
+  })
+
   recorder.start(EXPORT_RECORDER_TIMESLICE_MS)
 
   const frameDurationMs = 1000 / preset.fps
@@ -304,9 +328,7 @@ export async function exportPreviewToWebM({
 
   recorder.stop()
 
-  await new Promise<void>((resolve) => {
-    recorder.onstop = () => resolve()
-  })
+  await stopped
 
   return finalizeExport({
     chunks,
@@ -383,8 +405,10 @@ export async function exportVideoProjectToWebM({
       }
     }
 
-    const stopped = new Promise<void>((resolve) => {
+    // `onerror` so a mid-recording failure rejects `await stopped` instead of hanging it.
+    const stopped = new Promise<void>((resolve, reject) => {
       recorder.onstop = () => resolve()
+      recorder.onerror = () => reject(new Error('MediaRecorder error'))
     })
 
     recorder.start(EXPORT_RECORDER_TIMESLICE_MS)
