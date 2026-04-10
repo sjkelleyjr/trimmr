@@ -124,10 +124,13 @@ export function useTimelineSeek({
     window.addEventListener('pointerup', finalizeTimelineScrub)
     window.addEventListener('pointercancel', finalizeTimelineScrub)
     window.addEventListener('touchend', finalizeTimelineScrub)
+    // Firefox: some builds finalize range-thumb drags more reliably via mouseup than pointerup alone.
+    window.addEventListener('mouseup', finalizeTimelineScrub)
     return () => {
       window.removeEventListener('pointerup', finalizeTimelineScrub)
       window.removeEventListener('pointercancel', finalizeTimelineScrub)
       window.removeEventListener('touchend', finalizeTimelineScrub)
+      window.removeEventListener('mouseup', finalizeTimelineScrub)
     }
   }, [finalizeTimelineScrub])
 

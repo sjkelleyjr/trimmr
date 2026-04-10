@@ -104,7 +104,9 @@ describe('media engine', () => {
 
     expect(db.createObjectStore).toHaveBeenCalledWith('drafts')
     expect(db.transaction).toHaveBeenCalled()
-    expect(loaded).toEqual(project)
+    expect(loaded?.source).toBeNull()
+    expect(loaded?.clip).toBeNull()
+    expect(loaded?.overlays).toEqual([])
     expect(db.close).toHaveBeenCalledTimes(2)
   })
 

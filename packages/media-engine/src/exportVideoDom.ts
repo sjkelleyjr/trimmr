@@ -7,6 +7,18 @@ export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+/** Wait for the compositor so `canvas.captureStream` + `MediaRecorder` see fresh pixels (Gecko is stricter than Blink). */
+export function flushCompositedFrame(): Promise<void> {
+  if (typeof requestAnimationFrame === 'undefined') {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
 export function mimeTypeSupportedByRecorder(mime: string): boolean {
   return (
     typeof MediaRecorder !== 'undefined' &&

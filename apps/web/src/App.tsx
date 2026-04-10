@@ -110,6 +110,24 @@ function durationBucket(durationMs: number): string {
   return '>=120s'
 }
 
+/** ImageDecoder `type` must match container; `application/octet-stream` GIFs fail on Firefox. */
+function imageDecoderMimeForAnimatedSource(source: NonNullable<EditorProject['source']>): string {
+  if (source.kind !== 'animated-image') {
+    return source.mimeType || 'application/octet-stream'
+  }
+  const n = source.name.toLowerCase()
+  if (source.format === 'gif' || n.endsWith('.gif')) {
+    return 'image/gif'
+  }
+  if (source.format === 'animated-webp' || n.endsWith('.webp')) {
+    return 'image/webp'
+  }
+  if (source.format === 'apng' || n.endsWith('.apng')) {
+    return 'image/apng'
+  }
+  return source.mimeType || 'application/octet-stream'
+}
+
 function dimensionBucket(width: number, height: number): string {
   const pixels = Math.max(0, width) * Math.max(0, height)
   if (pixels <= 0) return 'unknown'
@@ -125,6 +143,9 @@ const FONT_OPTIONS = [
   { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
   { label: 'Display', value: '"Arial Black", Impact, sans-serif' },
 ]
+
+/** Select value: restore export canvas to clamped native source dimensions (see `set-export-size` limits). */
+const EXPORT_DIMENSION_SOURCE_VALUE = '__source__'
 
 const EXPORT_CANVAS_PRESETS = [
   { value: '720x720', label: 'Square 720 — 720 × 720' },
@@ -152,6 +173,20 @@ function exportCanvasMatchesPreset(width: number, height: number): boolean {
     const parsed = parseExportCanvasSize(preset.value)
     return parsed.width === width && parsed.height === height
   })
+}
+
+function clampedSourceExportDimensions(source: NonNullable<EditorProject['source']>) {
+  const w = clamp(source.width || 1080, 240, 1080)
+  const h = clamp(source.height || 1920, 240, 1920)
+  return { width: w, height: h }
+}
+
+function exportPresetMatchesSourceDimensions(
+  preset: EditorProject['exportPreset'],
+  source: NonNullable<EditorProject['source']>,
+) {
+  const { width, height } = clampedSourceExportDimensions(source)
+  return preset.width === width && preset.height === height
 }
 
 function overlayBackgroundCss(backgroundOpacity: number) {
@@ -274,9 +309,9 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const mediaSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const animatedImageDecoderRef = useRef<ImageDecoder | null>(null)
+  /** Composited GIF/WebP frames; avoids Firefox random `decode(frameIndex)` and canvas+`<img>` first-frame behavior. */
+  const animatedImageFrameBitmapsRef = useRef<ImageBitmap[] | null>(null)
   const animatedImageTimelineRef = useRef<{
-    frames: ImageBitmap[]
     totalDurationMs: number
     cumulativeDurationsMs: number[]
   } | null>(null)
@@ -830,14 +865,17 @@ function App() {
       // them per-render or Chromium will return a "broken" frame on the next read.
       let sourceImageFrame: CanvasImageSource | null = null
       if (project.source.kind === 'animated-image' && animatedImageTimelineRef.current) {
-        const { frames, cumulativeDurationsMs, totalDurationMs } = animatedImageTimelineRef.current
-        const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
-        const frameIndex = pickAnimatedFrameIndex(
-          cumulativeDurationsMs,
-          sourceTimeMs,
-          totalDurationMs,
-        )
-        sourceImageFrame = frames[frameIndex] ?? null
+        const bitmaps = animatedImageFrameBitmapsRef.current
+        if (bitmaps && bitmaps.length > 0) {
+          const { cumulativeDurationsMs, totalDurationMs } = animatedImageTimelineRef.current
+          const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
+          const frameIndex = pickAnimatedFrameIndex(
+            cumulativeDurationsMs,
+            sourceTimeMs,
+            totalDurationMs,
+          )
+          sourceImageFrame = bitmaps[frameIndex] ?? null
+        }
       }
 
       await drawProjectFrame({
@@ -868,15 +906,19 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
-    const resetAnimatedImageDecoder = () => {
-      animatedImageTimelineRef.current?.frames.forEach((frame) => frame.close())
+    const resetAnimatedImageAssets = () => {
+      const bitmaps = animatedImageFrameBitmapsRef.current
+      if (bitmaps) {
+        for (const bitmap of bitmaps) {
+          bitmap.close()
+        }
+        animatedImageFrameBitmapsRef.current = null
+      }
       animatedImageTimelineRef.current = null
-      animatedImageDecoderRef.current?.close()
-      animatedImageDecoderRef.current = null
     }
 
     if (project.source?.kind !== 'animated-image' || typeof ImageDecoder === 'undefined') {
-      resetAnimatedImageDecoder()
+      resetAnimatedImageAssets()
       return
     }
 
@@ -888,11 +930,11 @@ function App() {
       // exit path uniformly: cancellation, early return, thrown errors, and
       // partial `createImageBitmap` failures mid-loop.
       let decoder: ImageDecoder | null = null
-      const frames: ImageBitmap[] = []
+      const frameBitmaps: ImageBitmap[] = []
       let committed = false
 
       try {
-        const mimeType = source.mimeType || 'image/gif'
+        const mimeType = imageDecoderMimeForAnimatedSource(source)
         const supported = await ImageDecoder.isTypeSupported(mimeType)
         if (!supported || cancelled) return
 
@@ -927,18 +969,19 @@ function App() {
           decoded.image.close()
           totalDurationMs += frameDurationMs
           cumulativeDurationsMs.push(totalDurationMs)
-          frames.push(bitmap)
+          frameBitmaps.push(bitmap)
         }
 
         if (cancelled) return
 
-        animatedImageDecoderRef.current = decoder
+        animatedImageFrameBitmapsRef.current = frameBitmaps
         animatedImageTimelineRef.current = {
-          frames,
           totalDurationMs: Math.max(1, totalDurationMs),
           cumulativeDurationsMs,
         }
         committed = true
+        decoder.close()
+        decoder = null
         // Re-fire the render effect now that frames are drawable; the effect may
         // have already run once with `animatedImageTimelineRef.current === null`.
         setAnimatedImageReadyVersion((version) => version + 1)
@@ -946,7 +989,9 @@ function App() {
         /* swallow — `finally` releases any local resources */
       } finally {
         if (!committed) {
-          frames.forEach((frame) => frame.close())
+          for (const bitmap of frameBitmaps) {
+            bitmap.close()
+          }
           decoder?.close()
         }
       }
@@ -956,7 +1001,7 @@ function App() {
 
     return () => {
       cancelled = true
-      resetAnimatedImageDecoder()
+      resetAnimatedImageAssets()
     }
   }, [project.source])
 
@@ -1052,6 +1097,14 @@ function App() {
   useLayoutEffect(() => {
     bindVideoSource(project.source)
   }, [bindVideoSource, project.source])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || project.source?.kind !== 'video' || !project.clip) {
+      return
+    }
+    video.playbackRate = project.clip.playbackRate
+  }, [project.clip?.playbackRate, project.clip, project.source?.kind])
 
   useEffect(
     () => () => {
@@ -1299,19 +1352,18 @@ function App() {
               onProgress: handleExportProgress,
               drawFrame: async (timeMs) => {
                 let sourceImageFrame: CanvasImageSource | null = null
-                if (
-                  project.source?.kind === 'animated-image' &&
-                  animatedImageTimelineRef.current
-                ) {
-                  const { frames, cumulativeDurationsMs, totalDurationMs } =
-                    animatedImageTimelineRef.current
-                  const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
-                  const frameIndex = pickAnimatedFrameIndex(
-                    cumulativeDurationsMs,
-                    sourceTimeMs,
-                    totalDurationMs,
-                  )
-                  sourceImageFrame = frames[frameIndex] ?? null
+                if (project.source?.kind === 'animated-image' && animatedImageTimelineRef.current) {
+                  const bitmaps = animatedImageFrameBitmapsRef.current
+                  if (bitmaps && bitmaps.length > 0) {
+                    const { cumulativeDurationsMs, totalDurationMs } = animatedImageTimelineRef.current
+                    const sourceTimeMs = mapOutputTimeToSourceTime(project, timeMs)
+                    const frameIndex = pickAnimatedFrameIndex(
+                      cumulativeDurationsMs,
+                      sourceTimeMs,
+                      totalDurationMs,
+                    )
+                    sourceImageFrame = bitmaps[frameIndex] ?? null
+                  }
                 }
 
                 await drawProjectFrame({
@@ -1468,26 +1520,14 @@ function App() {
               </>
             ) : null}
             {project.source?.kind === 'animated-image' ? (
-              // `key` forces a fresh element on every import so the previous
-              // GIF's decoded bitmap can never bleed through. Off-screen styling
-              // (rather than `hidden`/`display:none`) ensures Firefox actually
-              // decodes the image so `drawImage` has pixels to read. `onLoad`
-              // bumps the version state so the render effect re-fires the moment
-              // the fallback `<img>` bitmap is ready.
               <img
                 key={project.source.id}
                 ref={imageRef}
+                className="preview-animated-source-fallback"
                 src={project.source.objectUrl}
                 alt=""
-                aria-hidden="true"
+                aria-hidden
                 onLoad={() => setAnimatedImageReadyVersion((version) => version + 1)}
-                style={{
-                  position: 'absolute',
-                  width: 1,
-                  height: 1,
-                  opacity: 0,
-                  pointerEvents: 'none',
-                }}
               />
             ) : null}
             <button
@@ -1634,6 +1674,10 @@ function App() {
                       >
                         Delete
                       </button>
+                      <p className="preview-overlay-timing-hint">
+                        Captions apply to the whole clip in the export. Use the trim handles under the
+                        preview to choose which part of the video is included.
+                      </p>
                     </div>
                   ) : (
                     <>
@@ -1975,12 +2019,39 @@ function App() {
               <div className="preview-export-select-field">
                 <Field label="Dimensions">
                   <select
-                    value={`${project.exportPreset.width}x${project.exportPreset.height}`}
+                    value={
+                      project.source &&
+                      exportPresetMatchesSourceDimensions(project.exportPreset, project.source)
+                        ? EXPORT_DIMENSION_SOURCE_VALUE
+                        : exportCanvasMatchesPreset(
+                            project.exportPreset.width,
+                            project.exportPreset.height,
+                          )
+                          ? `${project.exportPreset.width}x${project.exportPreset.height}`
+                          : `custom:${project.exportPreset.width}x${project.exportPreset.height}`
+                    }
                     onChange={(event) => {
-                      const { width, height } = parseExportCanvasSize(event.target.value)
+                      const raw = event.target.value
+                      if (raw === EXPORT_DIMENSION_SOURCE_VALUE) {
+                        const src = project.source
+                        if (!src) {
+                          return
+                        }
+                        const { width, height } = clampedSourceExportDimensions(src)
+                        runCommand({ type: 'set-export-size', width, height })
+                        return
+                      }
+                      const value = raw.startsWith('custom:') ? raw.slice('custom:'.length) : raw
+                      const { width, height } = parseExportCanvasSize(value)
                       runCommand({ type: 'set-export-size', width, height })
                     }}
                   >
+                    <option
+                      value={EXPORT_DIMENSION_SOURCE_VALUE}
+                      disabled={!project.source}
+                    >
+                      Original (source size)
+                    </option>
                     {EXPORT_CANVAS_PRESETS.map((preset) => (
                       <option key={preset.value} value={preset.value}>
                         {preset.label}
@@ -1989,9 +2060,13 @@ function App() {
                     {!exportCanvasMatchesPreset(
                       project.exportPreset.width,
                       project.exportPreset.height,
+                    ) &&
+                    !(
+                      project.source &&
+                      exportPresetMatchesSourceDimensions(project.exportPreset, project.source)
                     ) ? (
                       <option
-                        value={`${project.exportPreset.width}x${project.exportPreset.height}`}
+                        value={`custom:${project.exportPreset.width}x${project.exportPreset.height}`}
                       >
                         Custom — {project.exportPreset.width} × {project.exportPreset.height}
                       </option>

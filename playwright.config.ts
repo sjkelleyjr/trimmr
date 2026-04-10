@@ -51,6 +51,9 @@ function ensurePlaywrightBrowsersPath(): void {
 
 ensurePlaywrightBrowsersPath()
 
+/** Dev server + tests: capture export blobs for assertions when Firefox omits the download event. */
+process.env.VITE_PLAYWRIGHT_EXPORT_HOOK ??= '1'
+
 /** Mobile-focused specs (viewport + export); keeps mobile CI fast vs full editor matrix. */
 const mobileOnlyGlobs = ['**/mobile-overflow.spec.ts', '**/mobile-export.spec.ts']
 
@@ -70,6 +73,21 @@ export default defineConfig({
       name: 'chrome-desktop',
       use: {
         channel: 'chrome',
+      },
+      testIgnore: '**/mobile-export.spec.ts',
+    },
+    {
+      name: 'firefox-desktop',
+      use: {
+        ...devices['Desktop Firefox'],
+        launchOptions: {
+          firefoxUserPrefs: {
+            // Headless Gecko is strict about media; keep decode + autoplay permissive for preview/export tests.
+            'media.autoplay.default': 0,
+            'media.autoplay.blocking_policy': 0,
+            'media.mediasource.enabled': true,
+          },
+        },
       },
       testIgnore: '**/mobile-export.spec.ts',
     },
@@ -98,6 +116,11 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -w apps/web -- --host 127.0.0.1 --port 4173',
     port: 4173,
-    reuseExistingServer: true,
+    // Reusing a manually started dev server can omit VITE_PLAYWRIGHT_EXPORT_HOOK, breaking Firefox
+    // export tests that rely on __PLAYWRIGHT_LAST_EXPORT. CI always boots a fresh server with env below.
+    reuseExistingServer: !process.env.CI,
+    env: {
+      VITE_PLAYWRIGHT_EXPORT_HOOK: '1',
+    },
   },
 })

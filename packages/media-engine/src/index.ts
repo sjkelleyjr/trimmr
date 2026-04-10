@@ -25,6 +25,7 @@ import {
   createAdjustedAudioStream,
   createMediaRecorder,
   EXPORT_RECORDER_TIMESLICE_MS,
+  flushCompositedFrame,
   mimeTypeSupportedByRecorder,
   mountExportVideoInDocument,
   seekVideoToTime,
@@ -170,7 +171,7 @@ async function transcodeBlob({
 
   try {
     await ffmpeg.writeFile(inputFilename, await fetchFile(inputBlob))
-    const args = buildTranscodeArgs(outputFormat, inputFilename, outputFilename, fps)
+    const args = ['-threads', '1', ...buildTranscodeArgs(outputFormat, inputFilename, outputFilename, fps)]
     const handleProgress = (event: { progress: number }) => {
       onProgress?.({
         phase: 'transcode',
@@ -423,11 +424,20 @@ export async function exportPreviewToWebM({
   const frameDurationMs = 1000 / preset.fps
   for (let timeMs = 0; timeMs < durationMs; timeMs += frameDurationMs) {
     await drawFrame(timeMs)
+    await flushCompositedFrame()
     await wait(frameDurationMs)
     onProgress?.({
       phase: 'render',
       fraction: previewRenderProgressFraction(timeMs, frameDurationMs, durationMs),
     })
+  }
+
+  try {
+    if (recorder.state === 'recording') {
+      recorder.requestData()
+    }
+  } catch {
+    /* requestData is optional in some engines */
   }
 
   recorder.stop()
@@ -645,6 +655,14 @@ export async function exportVideoProjectToWebM({
 }
 
 export function downloadBlob(result: MediaExportResult) {
+  const viteEnv = (import.meta as ImportMeta & { env?: { VITE_PLAYWRIGHT_EXPORT_HOOK?: string } }).env
+  if (viteEnv?.VITE_PLAYWRIGHT_EXPORT_HOOK === '1' && typeof window !== 'undefined') {
+    const w = window as Window & {
+      __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
+    }
+    w.__PLAYWRIGHT_LAST_EXPORT = { blob: result.blob, filename: result.filename }
+  }
+
   const objectUrl = URL.createObjectURL(result.blob)
   const anchor = document.createElement('a')
   anchor.href = objectUrl

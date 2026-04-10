@@ -120,11 +120,16 @@
   overflow: hidden;
   background: #020617;
   border: 1px solid rgba(255, 255, 255, 0.06);
+  /* Keep tall/narrow exports from pushing controls off-screen (common on laptop + portrait video). */
+  max-height: min(72vh, 920px);
 }
 
 .preview-canvas {
   display: block;
   width: 100%;
+  max-height: min(72vh, 920px);
+  height: auto;
+  object-fit: contain;
   background: #020617;
 }
 
@@ -135,8 +140,25 @@
 .preview-video {
   display: block;
   width: 100%;
+  max-height: min(72vh, 920px);
+  height: auto;
   object-fit: contain;
   background: #020617;
+}
+
+/* Do not use the `hidden` attribute: Gecko may skip decoding/animating GIFs used as canvas fallback. */
+.preview-animated-source-fallback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0.02;
+  pointer-events: none;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .preview-history-button,
@@ -385,6 +407,14 @@
   background: rgba(127, 29, 29, 0.35);
   color: #fecaca;
   font-weight: 700;
+}
+
+.preview-overlay-timing-hint {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(148, 163, 184, 0.96);
 }
 
 .preview-overlay-resize-corner {

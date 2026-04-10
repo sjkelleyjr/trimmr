@@ -124,9 +124,20 @@ export async function drawProjectFrame({
   }
 
   if (project.source?.kind === 'animated-image') {
-    const animatedSource = sourceImageFrame ?? sourceImage
-    if (animatedSource) {
-      drawCover(context, animatedSource, canvas.width, canvas.height)
+    const frame = sourceImageFrame ?? null
+    const img = sourceImage
+    const frameIsVideo =
+      typeof VideoFrame !== 'undefined' && frame !== null && frame instanceof VideoFrame
+    if (frame && img && frameIsVideo) {
+      try {
+        drawCover(context, frame, canvas.width, canvas.height)
+      } catch {
+        drawCover(context, img, canvas.width, canvas.height)
+      }
+    } else if (frame) {
+      drawCover(context, frame, canvas.width, canvas.height)
+    } else if (img) {
+      drawCover(context, img, canvas.width, canvas.height)
     }
   }
 
@@ -148,31 +159,36 @@ export async function drawProjectFrame({
   }
 }
 
-/**
- * Duck-typed dimension lookup covering the `CanvasImageSource` used
- */
-function resolveSourceDimensions(
+function canvasSourceDimensions(
   source: CanvasImageSource,
-): { width: number; height: number } | null {
-  const obj = source as {
-    videoWidth?: number
-    videoHeight?: number
-    naturalWidth?: number
-    naturalHeight?: number
-    displayWidth?: number
-    displayHeight?: number
-    width?: number
-    height?: number
+  fallbackW: number,
+  fallbackH: number,
+): { w: number; h: number } | null {
+  if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
+    const w = source.displayWidth
+    const h = source.displayHeight
+    return w > 0 && h > 0 ? { w, h } : { w: fallbackW, h: fallbackH }
   }
-  const candidates: Array<[number | undefined, number | undefined]> = [
-    [obj.videoWidth, obj.videoHeight],
-    [obj.naturalWidth, obj.naturalHeight],
-    [obj.displayWidth, obj.displayHeight],
-    [obj.width, obj.height],
-  ]
-  for (const [width, height] of candidates) {
-    if (typeof width === 'number' && width > 0 && typeof height === 'number' && height > 0) {
-      return { width, height }
+  if (typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap) {
+    const w = source.width
+    const h = source.height
+    return w > 0 && h > 0 ? { w, h } : { w: fallbackW, h: fallbackH }
+  }
+  if (source instanceof HTMLCanvasElement) {
+    return source.width > 0 && source.height > 0
+      ? { w: source.width, h: source.height }
+      : { w: fallbackW, h: fallbackH }
+  }
+  if ('videoWidth' in source) {
+    const video = source as HTMLVideoElement
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      return { w: video.videoWidth, h: video.videoHeight }
+    }
+  }
+  if ('naturalWidth' in source) {
+    const image = source as HTMLImageElement
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      return { w: image.naturalWidth, h: image.naturalHeight }
     }
   }
   return null
@@ -184,11 +200,11 @@ function drawCover(
   targetWidth: number,
   targetHeight: number,
 ) {
-  const dims = resolveSourceDimensions(source)
+  const dims = canvasSourceDimensions(source, targetWidth, targetHeight)
   if (!dims) {
     return
   }
-  const sourceAspect = dims.width / dims.height
+  const sourceAspect = dims.w / Math.max(1, dims.h)
   const targetAspect = targetWidth / targetHeight
 
   let drawWidth = targetWidth

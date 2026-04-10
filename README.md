@@ -43,7 +43,8 @@ npm run dev
 - `npm run lint`: lints app code, package code, and root configs
 - `npm run test:coverage`: runs unit and integration tests with enforced coverage thresholds
 - `npm run test:e2e`: runs Playwright (desktop + emulated mobile Chrome and mobile Safari). Install browsers once: `npx playwright install`
-- `npm run test:e2e:desktop`: desktop Chrome only
+- `npm run test:e2e:desktop`: runs `chrome-desktop` and `firefox-desktop` (same desktop specs except `mobile-export`; Firefox uses a Playwright export hook when the download event is missing)
+- `npm run test:e2e:firefox`: `playwright test --project=firefox-desktop` only
 - `npm run test:e2e:mobile`: `mobile-overflow` + `mobile-export` specs only (includes a bounded WebM export that fails if export hangs)
 - `npm run telemetry:failures:query -- [days] [limit]`: prints a PostHog HogQL query for top media failure signatures
 - `npm run seo:sitemap`: regenerates `apps/web/public/sitemap.xml` with `<lastmod>` from file dates

@@ -150,19 +150,97 @@ export function assertExportMatchesFormat(
   }
 }
 
+function playwrightExportHookEnabled(): boolean {
+  return process.env.VITE_PLAYWRIGHT_EXPORT_HOOK === '1'
+}
+
+async function readExportHookPayload(page: Page): Promise<{ buffer: Buffer; filename: string } | null> {
+  const payload = await page.evaluate(async () => {
+    const w = window as Window & {
+      __PLAYWRIGHT_LAST_EXPORT?: { blob: Blob; filename: string }
+    }
+    const entry = w.__PLAYWRIGHT_LAST_EXPORT
+    if (!entry || entry.blob.size <= 64) {
+      return null
+    }
+    const buf = await entry.blob.arrayBuffer()
+    const filename = entry.filename
+    delete w.__PLAYWRIGHT_LAST_EXPORT
+    return { buf: Array.from(new Uint8Array(buf)), filename }
+  })
+  if (!payload?.buf) {
+    return null
+  }
+  return { buffer: Buffer.from(payload.buf), filename: payload.filename }
+}
+
 export async function exportAndAssertFormat(page: Page, format: E2eExportFormat) {
   await selectExportFormat(page, format)
 
   const exportButton = page.getByRole('button', { name: 'Export' })
   await expect(exportButton).toBeEnabled()
 
-  const [download] = await Promise.all([
-    page.waitForEvent('download', { timeout: 180_000 }),
-    exportButton.click(),
-  ])
+  await page.evaluate(() => {
+    const w = window as Window & { __PLAYWRIGHT_LAST_EXPORT?: unknown }
+    delete w.__PLAYWRIGHT_LAST_EXPORT
+  })
 
-  await expect(exportButton).toBeEnabled({ timeout: 180_000 })
+  // GIF palette encoding via ffmpeg.wasm is much slower on Firefox than Chrome/WebKit.
+  const exportWaitMs = format === 'gif' ? 420_000 : 180_000
 
+  const browserName = page.context().browser()?.browserType().name() ?? ''
+  const preferExportHook =
+    playwrightExportHookEnabled() && browserName === 'firefox'
+
+  const downloadPromise = page.waitForEvent('download', { timeout: exportWaitMs })
+
+  await exportButton.click()
+
+  await expect(exportButton).toBeEnabled({ timeout: exportWaitMs })
+
+  if (preferExportHook) {
+    // Firefox often fires `download` with an empty placeholder. `downloadBlob` sets
+    // `__PLAYWRIGHT_LAST_EXPORT` before the anchor click, so the hook usually appears first.
+    // Poll both: do not block the full exportWaitMs on waitForFunction (slow + flaky when the hook
+    // is missing e.g. reused dev server without VITE_PLAYWRIGHT_EXPORT_HOOK), and read the download
+    // as soon as it settles — a non-empty save can land before we observe the hook in some builds.
+    let settledDownload: Download | undefined
+    const trackDownload = downloadPromise.then((d) => {
+      settledDownload = d
+    })
+
+    const deadline = Date.now() + exportWaitMs
+    let triedReadDownload = false
+
+    while (Date.now() < deadline) {
+      const fromHook = await readExportHookPayload(page)
+      if (fromHook && fromHook.buffer.byteLength > 64) {
+        void trackDownload.catch(() => {})
+        assertExportMatchesFormat(fromHook.buffer, format, fromHook.filename)
+        return
+      }
+
+      if (settledDownload !== undefined && !triedReadDownload) {
+        triedReadDownload = true
+        try {
+          const buffer = await readDownloadBuffer(settledDownload)
+          if (buffer.byteLength > 64) {
+            void trackDownload.catch(() => {})
+            assertExportMatchesFormat(buffer, format, settledDownload.suggestedFilename())
+            return
+          }
+        } catch {
+          /* saveAs can fail transiently; keep polling for hook */
+        }
+      }
+
+      await page.waitForTimeout(100)
+    }
+
+    void trackDownload.catch(() => {})
+  }
+
+  const download = await downloadPromise
   const buffer = await readDownloadBuffer(download)
   assertExportMatchesFormat(buffer, format, download.suggestedFilename())
 }
@@ -268,12 +346,18 @@ export async function assertPreviewVideoPlaybackAdvances(page: Page) {
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
 
+  await expect
+    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.readyState), {
+      timeout: 45_000,
+    })
+    .toBeGreaterThanOrEqual(2)
+
   await setPreviewPlayingState(page, true)
 
   await expect
     .poll(
       async () => video.evaluate((el: HTMLVideoElement) => el.currentTime),
-      { timeout: 30_000 },
+      { timeout: 45_000 },
     )
     .toBeGreaterThan(0.08)
 
@@ -283,12 +367,19 @@ export async function assertPreviewVideoPlaybackAdvances(page: Page) {
 /**
  * While MP4 plays, WebKit may keep `webkitAudioDecodedByteCount` at 0; fall back to a short
  * Web Audio analyser pass on the preview `<video>` so CI still sees non‑silent output.
+ * Firefox omits `webkit*` counters; use `captureStream` + `AnalyserNode` when needed.
  */
 export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFile: string) {
   await importFixture(page, fixtureFile)
 
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
+
+  await expect
+    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.readyState), {
+      timeout: 45_000,
+    })
+    .toBeGreaterThanOrEqual(2)
 
   await setPreviewPlayingState(page, true)
 
@@ -297,10 +388,11 @@ export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFil
   await expect
     .poll(
       async () =>
-        page.evaluate(() => {
+        page.evaluate(async () => {
           const v = document.querySelector('video.preview-video') as
             | (HTMLVideoElement & {
                 webkitAudioDecodedByteCount?: number
+                mozHasAudio?: boolean
                 audioTracks?: { length: number }
                 captureStream?: () => MediaStream
               })
@@ -314,20 +406,54 @@ export async function assertPreviewVideoAudioDecodeSignal(page: Page, fixtureFil
           ) {
             return true
           }
+          if (typeof v.mozHasAudio === 'boolean' && v.mozHasAudio) {
+            return true
+          }
           if (v.audioTracks && v.audioTracks.length > 0) {
             return true
           }
           try {
             const stream = v.captureStream?.()
-            if (!stream) {
+            if (stream && stream.getAudioTracks().length > 0) {
+              return true
+            }
+          } catch {
+            /* captureStream may throw before playback; try analyser path */
+          }
+
+          try {
+            const stream = v.captureStream?.()
+            if (!stream || stream.getAudioTracks().length === 0) {
               return false
             }
-            return stream.getAudioTracks().length > 0
+            const AC =
+              window.AudioContext ||
+              (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+            if (!AC) {
+              return false
+            }
+            const ctx = new AC()
+            const src = ctx.createMediaStreamSource(stream)
+            const analyser = ctx.createAnalyser()
+            analyser.fftSize = 512
+            src.connect(analyser)
+            await ctx.resume()
+            await new Promise((r) => setTimeout(r, 200))
+            const data = new Uint8Array(analyser.frequencyBinCount)
+            analyser.getByteFrequencyData(data)
+            let max = 0
+            for (let i = 0; i < data.length; i += 1) {
+              if (data[i]! > max) {
+                max = data[i]!
+              }
+            }
+            await ctx.close()
+            return max > 3
           } catch {
             return false
           }
         }),
-      { timeout: 25_000 },
+      { timeout: 35_000 },
     )
     .toBe(true)
 }
@@ -338,6 +464,12 @@ export async function assertPreviewPlaybackAfterRepeatedPlayPause(
 ) {
   const video = page.locator(previewVideoSelector)
   await expect(video).toBeVisible({ timeout: 30_000 })
+
+  await expect
+    .poll(async () => video.evaluate((el: HTMLVideoElement) => el.readyState), {
+      timeout: 45_000,
+    })
+    .toBeGreaterThanOrEqual(2)
 
   for (let i = 0; i < opts.cycles; i += 1) {
     await clickPlayPause(page)
@@ -375,7 +507,7 @@ export async function assertPreviewPlaybackAfterRepeatedPlayPause(
           return duration - startTime + now
         }, resumedAt),
       {
-        timeout: 20_000,
+        timeout: 35_000,
       },
     )
     .toBeGreaterThan(0.01)

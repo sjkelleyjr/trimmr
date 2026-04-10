@@ -1,5 +1,16 @@
 import type { EditorProject, SourceMedia } from '@trimmr/shared'
 
+/** Draft with media metadata but no persisted bytes — old blob: URLs are invalid after reload. */
+function clearUnrestorableSource(project: EditorProject): EditorProject {
+  return {
+    ...project,
+    source: null,
+    clip: null,
+    overlays: [],
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 const DB_NAME = 'trimmr'
 const STORE_NAME = 'drafts'
 const LATEST_DRAFT_KEY = 'latest'
@@ -89,12 +100,22 @@ export async function loadDraft() {
     return null
   }
 
-  if (!project.source || !sourceBlob) {
+  if (!project.source) {
     return project
   }
 
-  // Detach the IDB-backed blob into a fresh in-memory copy
-  const detachedBlob = new Blob([await sourceBlob.arrayBuffer()], { type: sourceBlob.type })
+  const embeddedVideoBlob =
+    project.source.kind === 'video' && project.source.videoSrcBlob instanceof Blob
+      ? project.source.videoSrcBlob
+      : null
+
+  const bytes = sourceBlob ?? embeddedVideoBlob
+
+  if (!bytes) {
+    return clearUnrestorableSource(project)
+  }
+
+  const detachedBlob = new Blob([await bytes.arrayBuffer()], { type: bytes.type })
 
   return {
     ...project,

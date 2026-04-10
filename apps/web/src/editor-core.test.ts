@@ -413,6 +413,46 @@ describe('editor timeline model', () => {
     })
   })
 
+  it('updates a single overlay style field when others are omitted', () => {
+    const project = createProject()
+    const overlayId = project.overlays[0]!.id
+    const o = project.overlays[0]!
+
+    const colorOnly = applyCommand(project, {
+      type: 'set-overlay-style',
+      overlayId,
+      color: '#010203',
+    })
+    expect(colorOnly.overlays[0]).toMatchObject({
+      color: '#010203',
+      fontFamily: o.fontFamily,
+      backgroundOpacity: o.backgroundOpacity,
+    })
+
+    const fontOnly = applyCommand(colorOnly, {
+      type: 'set-overlay-style',
+      overlayId,
+      fontFamily: 'Helvetica, Arial, sans-serif',
+    })
+    expect(fontOnly.overlays[0]).toMatchObject({
+      color: '#010203',
+      fontFamily: 'Helvetica, Arial, sans-serif',
+      backgroundOpacity: o.backgroundOpacity,
+    })
+  })
+
+  it('clamps overlay backgroundOpacity from set-overlay-style', () => {
+    const project = createProject()
+    const overlayId = project.overlays[0]!.id
+    const next = applyCommand(project, {
+      type: 'set-overlay-style',
+      overlayId,
+      backgroundOpacity: 2,
+    })
+
+    expect(next.overlays[0]?.backgroundOpacity).toBe(1)
+  })
+
   it('leaves undo and redo unchanged when history stacks are empty', () => {
     const history = createHistory(createProject())
     expect(undo(history)).toBe(history)
