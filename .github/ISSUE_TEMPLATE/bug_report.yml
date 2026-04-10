@@ -4,12 +4,17 @@ title: "bug: "
 labels:
   - bug
 body:
-  - type: markdown
+  - type: textarea
+    id: intro
     attributes:
+      label: Context
+      description: Shown in the issue; edit or delete if you prefer.
       value: |
         Thanks for reporting a bug.
 
         Please fill in all required fields so we can reproduce and debug quickly.
+    validations:
+      required: false
   - type: textarea
     id: summary
     attributes:
