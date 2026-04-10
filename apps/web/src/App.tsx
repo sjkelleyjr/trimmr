@@ -46,6 +46,7 @@ import {
 import { classifyExportError, classifyImportError } from './lib/errorTaxonomy'
 import { useSafariCompatibilityBanner } from './hooks/useSafariCompatibilityBanner'
 import { buildTrafficSourceProps } from './lib/trafficSource'
+import { buildGifFrameCacheFromBytes, disposeGifFrameCache } from './lib/gifFrameCache'
 import {
   drawProjectFrame,
   exportAspectRatioCss,
@@ -126,6 +127,34 @@ function imageDecoderMimeForAnimatedSource(source: NonNullable<EditorProject['so
     return 'image/apng'
   }
   return source.mimeType || 'application/octet-stream'
+}
+
+type AnimatedFrameSource = ImageBitmap | HTMLCanvasElement
+
+async function frameSourceFromVideoFrame(videoFrame: VideoFrame): Promise<AnimatedFrameSource | null> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(videoFrame)
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const w = Math.max(1, videoFrame.displayWidth)
+  const h = Math.max(1, videoFrame.displayHeight)
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const context = canvas.getContext('2d')
+  if (!context) {
+    return null
+  }
+  try {
+    context.drawImage(videoFrame, 0, 0, w, h)
+    return canvas
+  } catch {
+    return null
+  }
 }
 
 function dimensionBucket(width: number, height: number): string {
@@ -309,8 +338,8 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const mediaSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null)
-  /** Composited GIF/WebP frames; avoids Firefox random `decode(frameIndex)` and canvas+`<img>` first-frame behavior. */
-  const animatedImageFrameBitmapsRef = useRef<ImageBitmap[] | null>(null)
+  /** Composited animated-image frames for deterministic scrub/render (Safari fallback uses canvas frames). */
+  const animatedImageFrameBitmapsRef = useRef<AnimatedFrameSource[] | null>(null)
   const animatedImageTimelineRef = useRef<{
     totalDurationMs: number
     cumulativeDurationsMs: number[]
@@ -909,15 +938,13 @@ function App() {
     const resetAnimatedImageAssets = () => {
       const bitmaps = animatedImageFrameBitmapsRef.current
       if (bitmaps) {
-        for (const bitmap of bitmaps) {
-          bitmap.close()
-        }
+        disposeGifFrameCache(bitmaps)
         animatedImageFrameBitmapsRef.current = null
       }
       animatedImageTimelineRef.current = null
     }
 
-    if (project.source?.kind !== 'animated-image' || typeof ImageDecoder === 'undefined') {
+    if (project.source?.kind !== 'animated-image') {
       resetAnimatedImageAssets()
       return
     }
@@ -925,73 +952,108 @@ function App() {
     const source = project.source
 
     const initializeAnimatedImageDecoder = async () => {
-      // All resources created here are local until `committed` flips true.
-      // The `finally` block closes anything still local — this handles every
-      // exit path uniformly: cancellation, early return, thrown errors, and
-      // partial `createImageBitmap` failures mid-loop.
       let decoder: ImageDecoder | null = null
-      const frameBitmaps: ImageBitmap[] = []
+      const frameSources: AnimatedFrameSource[] = []
       let committed = false
 
       try {
-        const mimeType = imageDecoderMimeForAnimatedSource(source)
-        const supported = await ImageDecoder.isTypeSupported(mimeType)
-        if (!supported || cancelled) return
-
         const response = await fetch(source.objectUrl)
         if (!response.ok || cancelled) return
 
         const bytes = await response.arrayBuffer()
         if (cancelled) return
 
-        decoder = new ImageDecoder({ type: mimeType, data: bytes, preferAnimation: true })
+        const tryGifByteFallback = async (): Promise<boolean> => {
+          const name = source.name.toLowerCase()
+          if (source.format !== 'gif' && !name.endsWith('.gif')) {
+            return false
+          }
+          const parsed = await buildGifFrameCacheFromBytes(bytes)
+          if (!parsed || cancelled) {
+            return false
+          }
+          animatedImageFrameBitmapsRef.current = parsed.frames
+          animatedImageTimelineRef.current = {
+            totalDurationMs: Math.max(1, parsed.totalDurationMs),
+            cumulativeDurationsMs: parsed.cumulativeDurationsMs,
+          }
+          committed = true
+          setAnimatedImageReadyVersion((version) => version + 1)
+          return true
+        }
+
+        const isGifSource = source.format === 'gif' || source.name.toLowerCase().endsWith('.gif')
+        if (isWebKit && isGifSource) {
+          void (await tryGifByteFallback())
+          return
+        }
+
+        if (typeof ImageDecoder === 'undefined') {
+          void (await tryGifByteFallback())
+          return
+        }
+
+        const mimeType = imageDecoderMimeForAnimatedSource(source)
+        try {
+          await ImageDecoder.isTypeSupported(mimeType)
+        } catch {
+          /* best effort: WebKit can misreport support */
+        }
+
+        try {
+          decoder = new ImageDecoder({ type: mimeType, data: bytes, preferAnimation: true })
+        } catch {
+          decoder = new ImageDecoder({ type: mimeType, data: bytes })
+        }
         await decoder.tracks.ready
         if (cancelled) return
 
         const track = decoder.tracks.selectedTrack
         const frameCount = track?.frameCount ?? 0
-        if (!track || frameCount < 1) return
+        if (!track || frameCount < 1) {
+          if (await tryGifByteFallback()) return
+          return
+        }
 
-        // Pre-extract every frame as an `ImageBitmap`. Subsequent renders read
-        // from this stable array — we never re-decode, so closing the source
-        // `VideoFrame` (which invalidates Chromium's per-frameIndex cache slot)
-        // is safe.
         const cumulativeDurationsMs: number[] = []
         let totalDurationMs = 0
         for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
           if (cancelled) return
-          const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true })
-          const frameDurationMs = Math.max(
-            16,
-            Math.round((decoded.image.duration ?? 100_000) / 1000),
-          )
-          const bitmap = await createImageBitmap(decoded.image)
-          decoded.image.close()
+          let decoded: ImageDecodeResult
+          try {
+            decoded = await decoder.decode({ frameIndex, completeFramesOnly: false })
+          } catch {
+            decoded = await decoder.decode({ frameIndex, completeFramesOnly: true })
+          }
+          const frameDurationMs = Math.max(16, Math.round((decoded.image.duration ?? 100_000) / 1000))
+          const frame = decoded.image
+          const frameSource = await frameSourceFromVideoFrame(frame)
+          frame.close()
+          if (!frameSource) {
+            if (await tryGifByteFallback()) return
+            return
+          }
           totalDurationMs += frameDurationMs
           cumulativeDurationsMs.push(totalDurationMs)
-          frameBitmaps.push(bitmap)
+          frameSources.push(frameSource)
         }
 
         if (cancelled) return
 
-        animatedImageFrameBitmapsRef.current = frameBitmaps
+        animatedImageFrameBitmapsRef.current = frameSources
         animatedImageTimelineRef.current = {
           totalDurationMs: Math.max(1, totalDurationMs),
           cumulativeDurationsMs,
         }
         committed = true
-        decoder.close()
-        decoder = null
-        // Re-fire the render effect now that frames are drawable; the effect may
-        // have already run once with `animatedImageTimelineRef.current === null`.
         setAnimatedImageReadyVersion((version) => version + 1)
       } catch {
-        /* swallow — `finally` releases any local resources */
+        /* keep fallback path quiet; render uses static <img> when no timeline */
       } finally {
         if (!committed) {
-          for (const bitmap of frameBitmaps) {
-            bitmap.close()
-          }
+          disposeGifFrameCache(frameSources)
+          decoder?.close()
+        } else {
           decoder?.close()
         }
       }
@@ -1003,7 +1065,7 @@ function App() {
       cancelled = true
       resetAnimatedImageAssets()
     }
-  }, [project.source])
+  }, [isWebKit, project.source])
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
