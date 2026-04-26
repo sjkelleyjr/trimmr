@@ -6,7 +6,7 @@ import './index.css'
 import App from './App.tsx'
 
 if (window.location.pathname === '/workflows' || window.location.pathname === '/workflows/') {
-  window.location.replace('/workflows/index.html')
+  window.location.replace('/workflows/')
 }
 
 const posthogToken = import.meta.env.VITE_PUBLIC_POSTHOG_TOKEN
