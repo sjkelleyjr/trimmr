@@ -36,7 +36,7 @@ export default defineConfig({
         if (!fs.existsSync(workflowsDir)) return
 
         server.middlewares.use((req, res, next) => {
-          const pathname = req.url.split('?')[0] // ignore query params
+          const pathname = (req.url ?? '/').split('?')[0] // ignore query params
 
           // Only handle /workflows paths — don't interfere with the SPA root
           if (!pathname.startsWith('/workflows')) return next()
