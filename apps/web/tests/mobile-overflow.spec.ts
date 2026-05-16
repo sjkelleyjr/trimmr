@@ -9,10 +9,10 @@ const MOBILE_VIEWPORTS = [
 const PAGES = [
   { path: '/', name: 'editor' },
   { path: '/workflows/', name: 'workflows hub' },
-  { path: '/workflows/trimmr-vs-kapwing.html', name: 'kapwing comparison page' },
-  { path: '/workflows/trim-video.html', name: 'trim video workflow' },
-  { path: '/workflows/video-to-gif.html', name: 'video to GIF workflow' },
-  { path: '/workflows/video-meme.html', name: 'video meme workflow' },
+  { path: '/workflows/trimmr-vs-kapwing/', name: 'kapwing comparison page' },
+  { path: '/workflows/trim-video/', name: 'trim video workflow' },
+  { path: '/workflows/video-to-gif/', name: 'video to GIF workflow' },
+  { path: '/workflows/video-meme/', name: 'video meme workflow' },
 ] as const
 
 async function horizontalOverflowPx(page: Page): Promise<number> {
