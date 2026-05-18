@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://trimmr.xyz/sitemap.xml

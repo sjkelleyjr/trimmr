@@ -1,5 +1,1 @@
-# Bypass Cloudflare's stale Content-Length header cache for robots.txt.
-# Cloudflare was caching Content-Length: 64 for a 1802-byte file,
-# causing Google to fail to parse and miss the sitemap link.
-/robots.txt
-  Cache-Control: no-store
+# Cloudflare Pages custom headers
